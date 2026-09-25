@@ -1800,7 +1800,13 @@ def test_claude_off_mode_keeps_knowledge_readable_without_vr_tools(
     assert f"Write({knowledge}/**)" not in allowed
     assert f"Edit({conhecimento}/**)" not in allowed
     assert f"Write({conhecimento}/**)" not in allowed
-    assert "--disallowedTools" not in command
+    if profile == "auto":
+        disallowed = command[command.index("--disallowedTools") + 1]
+        assert f"Edit({conhecimento}/**)" in disallowed
+        assert f"Write({conhecimento}/**)" in disallowed
+        assert f"Edit({project}/**)" not in disallowed
+    else:
+        assert "--disallowedTools" not in command
     mcp = json.loads(command[command.index("--mcp-config") + 1])["mcpServers"]
     assert "vr-mary-studio" in mcp
     assert str(knowledge) in mcp["vr-mary-studio"]["args"]

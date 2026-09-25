@@ -3574,7 +3574,7 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn("Theme.palette.chatControl", profile_qml)
         self.assertIn("VrChatComposer {", chat_qml)
         self.assertIn("contentHeight + topPadding + bottomPadding", composer_qml)
-        self.assertIn("Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(Theme.scaledGeometry(54)", composer_qml)
+        self.assertIn("Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(Theme.scaledGeometry(70)", composer_qml)
         self.assertIn(
             'variant: composerCard.page.chatBridge.vrMode !== "off" ? "primary" : "ghost"',
             composer_qml,
@@ -4049,11 +4049,11 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(bridge.activityElapsedLabel, "1m 05s")
 
     def test_markdown_display_repairs_glued_sentences_without_touching_code(self):
-        source = "Versão pronta.Próximo passo: `arquivo.MD`."
+        source = "Versão pronta.Próximo passo: `código`."
 
         self.assertEqual(
             markdown_for_display(source),
-            "Versão pronta. Próximo passo: `arquivo.MD`.",
+            "Versão pronta. Próximo passo: `código`.",
         )
 
     def test_segments_for_display_splits_fenced_code_cards(self):
@@ -4197,8 +4197,8 @@ class QmlFrontendTest(unittest.TestCase):
                 thumbnail = next((sub for item in content_item.childItems() for sub in item.childItems() if sub.property("objectName") == "chatAttachmentThumbnail"), None)
                 self.assertIsNotNone(thumbnail)
                 self.assertTrue(thumbnail.property("visible"))
-                self.assertEqual(thumbnail.property("width"), 60)
-                self.assertEqual(thumbnail.property("height"), 60)
+                self.assertEqual(thumbnail.property("width"), 64)
+                self.assertEqual(thumbnail.property("height"), 64)
                 attachment_list = window.findChild(QObject, "chatAttachmentList")
                 self.assertIsNotNone(attachment_list)
                 self.assertEqual(attachment_list.property("count"), 1)

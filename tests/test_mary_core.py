@@ -308,10 +308,19 @@ class MaryCoreTest(unittest.TestCase):
 
         orchestrator.send(conversation_id, "Teste", lambda _event: None)
 
-        self.assertTrue((workspace / "tools" / "vr-search.ps1").is_file())
-        self.assertIn("botão VR está", (workspace / "AGENTS.md").read_text("utf-8"))
-        self.assertNotIn("../../AGENTS.md", (workspace / "AGENTS.md").read_text("utf-8"))
-        self.assertNotIn("@../../AGENTS.md", (workspace / "CLAUDE.md").read_text("utf-8"))
+        agents_text = (workspace / "AGENTS.md").read_text("utf-8")
+        claude_text = (workspace / "CLAUDE.md").read_text("utf-8")
+        self.assertFalse((workspace / "tools" / "vr-search.ps1").exists())
+        self.assertIn(
+            "O contrato de cada turno fornecido pelo Studio é autoritativo",
+            agents_text,
+        )
+        self.assertIn(
+            "O contrato de cada turno fornecido pelo Studio é autoritativo",
+            claude_text,
+        )
+        self.assertNotIn("../../AGENTS.md", agents_text)
+        self.assertNotIn("@../../AGENTS.md", claude_text)
         provider.start_conversation.assert_called_once()
 
     def test_conversation_effort_is_persisted_and_legacy_schema_is_migrated(self):
@@ -3347,6 +3356,58 @@ class MaryCoreTest(unittest.TestCase):
 
             time.sleep(0.005)
         self.assertIn("CONTEXTO TRANSFERIDO", fake.prompts[-1])
+        self.assertIn("Criar treinamento de PIX", fake.prompts[-1])
+
+    def test_failed_first_turn_replays_cloned_context_on_retry(self):
+        class FlakyProvider:
+            def __init__(self):
+                self.prompts = []
+                self.failures = 1
+
+            def available(self):
+                return True
+
+            def start_conversation(self, *_args):
+                return f"native-{len(self.prompts)}"
+
+            def send_message(self, *args):
+                if self.failures:
+                    self.failures -= 1
+                    raise RuntimeError("falha simulada")
+                self.prompts.append(args[5])
+
+            def close(self):
+                pass
+
+        database = initialize_workspace(self.settings)
+        orchestrator = ChatOrchestrator(self.settings, database)
+        fake = FlakyProvider()
+        orchestrator.providers = {"codex": fake, "claude": fake}
+        source = orchestrator.new_conversation("codex", defer_provider_start=True)
+        database.add_message(source, "user", "Criar treinamento de PIX")
+        database.add_message(source, "assistant", "Use a rotina financeira.")
+        clone = orchestrator.clone(source, "claude")
+
+        first_turn_done = threading.Event()
+
+        def first_callback(event):
+            if event.kind == "turn_completed":
+                first_turn_done.set()
+
+        orchestrator.send(clone, "Continue o trabalho", first_callback)
+        self.assertTrue(first_turn_done.wait(5))
+        orchestrator.drain_turn_finalizations()
+        self.assertEqual(database.get_conversation(clone)["native_id"], "")
+
+        orchestrator.send(clone, "Continue o trabalho", lambda _event: None)
+        for _ in range(100):
+            if fake.prompts:
+                break
+            import time
+
+            time.sleep(0.005)
+        self.assertIn("CONTEXTO TRANSFERIDO", fake.prompts[-1])
+        self.assertIn("Contexto clonado de outra conversa", fake.prompts[-1])
         self.assertIn("Criar treinamento de PIX", fake.prompts[-1])
 
 

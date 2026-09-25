@@ -141,17 +141,15 @@ class TestPromptPrefixCache:
             "Regras internas do projeto", encoding="utf-8"
         )
         (workspace / "manual.txt").write_text("Manual", encoding="utf-8")
-        conversation_id = orchestrator.new_conversation(
+        orchestrator.new_conversation(
             "codex", "sol", defer_provider_start=True, workspace=workspace, vr_enabled=False
         )
-        conversation = dict(orchestrator._conversation(conversation_id))
         request = "Analise este stack trace sem consultar a base."
         with patch.object(
             orchestrator.database, "search", side_effect=AssertionError("sem retrieval")
         ):
             prompt = orchestrator._enrich_off_prompt(
                 request,
-                conversation=conversation,
                 workspace=workspace,
             )
         assert "INSTRUÇÕES DO PROJETO:" in prompt
@@ -175,7 +173,6 @@ class TestPromptPrefixCache:
         ):
             prompt = orchestrator._enrich_off_prompt(
                 request,
-                conversation=conversation,
                 workspace=workspace,
             )
         assert "INSTRUÇÕES DO PROJETO:" not in prompt
@@ -239,7 +236,6 @@ class TestPromptPrefixCache:
         workspace.mkdir()
         prompt = orchestrator._enrich_off_prompt(
             "Pergunta de teste",
-            conversation={},
             workspace=workspace,
         )
         assert str((settings.root / "conhecimento").resolve()) in prompt
@@ -253,7 +249,6 @@ class TestPromptPrefixCache:
 
         prompt_with_all = orchestrator._enrich_off_prompt(
             "Pergunta com todas as raízes",
-            conversation={},
             workspace=workspace,
         )
         assert str((settings.root / "conhecimento").resolve()) in prompt_with_all
@@ -288,7 +283,6 @@ class TestPromptPrefixCache:
         ):
             prompt = orchestrator._enrich_off_prompt(
                 request,
-                conversation=conversation,
                 workspace=workspace,
             )
 

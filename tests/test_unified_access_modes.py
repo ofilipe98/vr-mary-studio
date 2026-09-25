@@ -295,14 +295,12 @@ def test_off_mode_project_instructions_and_file_listing(tmp_path: Path):
     (project_dir / "INSTRUCTIONS.md").write_text("Regras internas de contabilidade VR", encoding="utf-8")
     (project_dir / "manual.txt").write_text("Manual do usuario", encoding="utf-8")
 
-    conv_id = orchestrator.new_conversation(
+    orchestrator.new_conversation(
         "codex", "sol", workspace=str(project_dir), defer_provider_start=True, vr_enabled=False
     )
-    conv_row = orchestrator._conversation(conv_id)
 
     enriched = orchestrator._enrich_off_prompt(
         "Como funciona a contabilidade?",
-        conversation=dict(conv_row),
         workspace=project_dir,
     )
     assert "INSTRUÇÕES DO PROJETO:" in enriched
@@ -329,7 +327,6 @@ def test_off_mode_scratchpad_workspace_no_inheritance(tmp_path: Path):
 
     enriched = orchestrator._enrich_off_prompt(
         "Pergunta geral",
-        conversation=dict(conv_row),
         workspace=ws,
     )
     # Managed scratchpad workspace should not inject project instructions

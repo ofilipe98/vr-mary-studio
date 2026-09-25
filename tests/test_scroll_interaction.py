@@ -126,6 +126,71 @@ def test_mouse_wheel_and_scrollbar_keep_control_during_updates(tmp_path, history
         chat.close()
 
 
+def test_composer_restores_expanded_at_page_end_while_turn_running(tmp_path):
+    """T3 parity: reaching the timeline end lifts the resting composer even
+    while the turn is still streaming; a running turn never rests it by itself."""
+    _app = QApplication.instance() or QApplication([])
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / 'VRProject', old_root=tmp_path / 'old')
+    prefs = QSettings(str(tmp_path / 'ui.ini'), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+    cid = db.create_conversation('RestoreAtEnd', 'codex', 'test', settings.root)
+    for i in range(12):
+        db.add_message(cid, 'user' if i % 2 else 'assistant', ('Mensagem no historico.\n\n' * 6))
+    frontend = FrontendBridge(settings, prefs, initial_page='Chat VR')
+    frontend.setReduceMotion(True)
+    chat = ChatBridge(settings, db, prefs)
+    studio = StudioBridge(settings, db, prefs)
+    window = None
+    try:
+        with patch.object(chat, 'refreshModels'), patch.object(chat, 'refreshUsageLimits'):
+            engine = create_engine(frontend, chat, studio)
+            window = engine.rootObjects()[0]
+            window.setWidth(1000)
+            window.setHeight(600)
+            QTest.qWait(350)
+            timeline = window.findChild(QObject, 'messageList')
+            composer = window.findChild(QObject, 'chatComposerCard')
+            compact_height = composer.property('compactHeight')
+            normal_height = composer.property('normalHeight')
+
+            chat._active_turns.add(cid)
+            chat.stateChanged.emit()
+            QTest.qWait(200)
+            assert chat.turnRunning
+
+            # Pinned at the end with a running turn: the composer stays expanded.
+            timeline.setProperty('followTail', True)
+            timeline.positionViewAtEnd()
+            QTest.qWait(300)
+            assert composer.property('isAtBottom')
+            assert not composer.property('isCompact')
+            assert abs(composer.height() - normal_height) < 1
+
+            # Scrolling away rests it while the turn keeps running.
+            max_y = timeline.property('contentHeight') - timeline.property('height')
+            timeline.setProperty('followTail', False)
+            timeline.setProperty('contentY', max_y - 120)
+            QTest.qWait(300)
+            assert not composer.property('isAtBottom')
+            assert composer.property('isCompact')
+            assert abs(composer.height() - compact_height) < 1
+
+            # Returning to the end restores it without stopping the turn.
+            timeline.positionViewAtEnd()
+            timeline.setProperty('followTail', True)
+            QTest.qWait(300)
+            assert chat.turnRunning
+            assert composer.property('isAtBottom')
+            assert not composer.property('isCompact')
+            assert abs(composer.height() - normal_height) < 1
+            assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
+    finally:
+        if window is not None:
+            window.close()
+        studio.close()
+        chat.close()
+
+
 @pytest.mark.parametrize('reduce_motion', [False, True])
 def test_composer_expands_only_when_reaching_bottom_of_page(tmp_path, reduce_motion):
     _app = QApplication.instance() or QApplication([])
@@ -203,7 +268,8 @@ def test_composer_expands_only_when_reaching_bottom_of_page(tmp_path, reduce_mot
             # base da superfície, sem bandeja separada abaixo do composer.
             assert abs(surface.height() - composer.height()) < 1
             assert 0 < tray.y()
-            assert abs((tray.y() + tray.height()) - (composer.height() - 8)) < 1
+            # T3 Code footer uses pb-4 (16px) below the integrated controls.
+            assert abs((tray.y() + tray.height()) - (composer.height() - 16)) < 1
             assert tray.x() >= 0
             assert tray.x() + tray.width() <= surface.width() + 1
             assert bool(any(compact_height + 1 < h < normal_height - 1 for h in heights)) == (not reduce_motion)

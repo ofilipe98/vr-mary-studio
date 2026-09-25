@@ -543,23 +543,21 @@ class ChatOrchestrator:
             delta_count = 0
             target_response_mode = "vr" if effective_use_vr else "native"
             if starts_new_native_session:
-                if any(row["role"] == "user" for row in existing_messages):
-                    history_rows = [
-                        row
-                        for row in existing_messages[-30:]
-                        if row["role"] in {"user", "assistant"}
-                    ]
-                    cloned_history_count = len(history_rows)
-                    cloned_context = "\n\n".join(
-                        f"{row['role'].upper()}: {row['content']}"
-                        for row in history_rows
-                    )
-                elif not any(row["role"] == "user" for row in existing_messages):
-                    cloned_context = "\n\n".join(
-                        row["content"]
-                        for row in existing_messages
-                        if row["role"] == "system"
-                    )
+                # Clone/branch transcripts live in system rows and must reach a
+                # new native session even when user/assistant rows exist (for
+                # example when the first attempt failed and is retried).
+                history_rows = [
+                    row
+                    for row in existing_messages[-30:]
+                    if row["role"] in {"user", "assistant", "system"}
+                ]
+                cloned_history_count = len(history_rows)
+                cloned_context = "\n\n".join(
+                    row["content"]
+                    if row["role"] == "system"
+                    else f"{row['role'].upper()}: {row['content']}"
+                    for row in history_rows
+                )
             else:
                 delta_context, delta_count = self._mode_session_delta_context(
                     existing_messages, target_response_mode
@@ -638,7 +636,7 @@ class ChatOrchestrator:
                     + "\n\nSOLICITAÇÃO ATUAL:\n"
                 )
                 orchestration_request = history_prefix + text
-            elif existing_messages and not resume_run_id:
+            elif existing_messages and not resume_run_id and ultra_source_fanout:
                 recent_turns: list[str] = []
                 for msg in existing_messages[-4:]:
                     msg_dict = dict(msg)
@@ -827,7 +825,6 @@ class ChatOrchestrator:
                         if effective_use_vr
                         else self._enrich_off_prompt(
                             text,
-                            conversation=dict(conversation),
                             workspace=workspace,
                         )
                     )
@@ -2143,7 +2140,6 @@ class ChatOrchestrator:
         self,
         text: str,
         *,
-        conversation: dict[str, Any],
         workspace: Path,
     ) -> str:
         from .direct_sources import existing_off_direct_source_roots
@@ -2793,6 +2789,13 @@ class ChatOrchestrator:
                         int(event.payload.get("_owner_message") or (execution_state.execution_id if execution_state else 0)),
                         terminal_state or "idle"):
                     return
+                if terminal_state == "error":
+                    self._drop_unstarted_native_session(
+                        event.conversation_id,
+                        self._pending_response_modes.get(
+                            event.conversation_id, "native"
+                        ),
+                    )
                 from .knowledge_access import close_scope
                 close_scope(access_paths.pop(event.conversation_id, ""))
                 getattr(self, "_turn_application_contexts", {}).pop(
@@ -2854,6 +2857,26 @@ class ChatOrchestrator:
         callback = self._external_callbacks.get(conversation_id)
         if callback:
             callback(event)
+
+    def _drop_unstarted_native_session(
+        self, conversation_id: str, response_mode: str
+    ) -> None:
+        """Drop a native session that never delivered a completed turn.
+
+        A failed first turn leaves the session id persisted without provider
+        history. Retrying would reuse it and silently lose the local history
+        transfer, so the next send starts fresh and transfers again.
+        """
+        if any(
+            str(row["role"]) == "assistant"
+            for row in self.database.messages(conversation_id)
+        ):
+            return
+        column = self._native_column(response_mode == "vr")
+        conversation = self.database.get_conversation(conversation_id)
+        if conversation is None or not str(conversation[column] or ""):
+            return
+        self.database.update_conversation(conversation_id, **{column: ""})
 
     @staticmethod
     def _looks_like_final_envelope(text: str) -> bool:
@@ -3145,6 +3168,7 @@ class ChatOrchestrator:
             source_options.collaboration_mode,
             dynamic_tool_ids if dynamic_tool_ids is not None else selected["dynamic"],
             mcp_tools if mcp_tools is not None else selected["mcp"],
+            defer_provider_start=True,
             workspace=project_workspace,
             vr_enabled=bool(source["vr_enabled"]),
             vr_mode=source_options.vr_mode,
@@ -3219,9 +3243,6 @@ class ChatOrchestrator:
                         response_mode=str(row["response_mode"] or ""),
                     )
         else:
-            native_id = provider.start_conversation(
-                new_id, options.model, options.effort, workspace, options
-            )
             transcript = "\n\n".join(
                 f"{str(row['role']).upper()}: {row['content']}" for row in self._context_messages(previous)
             )

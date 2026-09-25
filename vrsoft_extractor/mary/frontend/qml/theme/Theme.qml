@@ -171,7 +171,9 @@ QtObject {
     // T3 chat column: max-w-3xl = 48rem = 768px.
     readonly property int contentWidth: scaledGeometry(768)
     readonly property int messageRadius: scaledGeometry(16)
-    readonly property int composerRadius: scaledGeometry(16)
+    // T3 Code composer surface: rounded-3xl = 1.5rem = 24px; the resting
+    // context strip closes with rounded-b-2xl = 16px corners.
+    readonly property int composerRadius: scaledGeometry(24)
     readonly property int messageGap: scaledGeometry(8)
 
     // Lucide-style presence on T3's size scale (12/14/16/18/20)

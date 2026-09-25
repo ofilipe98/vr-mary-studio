@@ -3137,6 +3137,12 @@ class ChatBridge(QObject):
                 response_mode=effective_response_mode,
                 **({"resume_run_id": resume_run_id} if resume_run_id else {}),
             )
+            if resume_run_id:
+                row = self._database.get_conversation(conversation_id)
+                if row is not None:
+                    self._vr_mode = (
+                        self._normalize_vr_mode(row["vr_mode"]) or self._vr_mode
+                    )
             self._draft_records.pop(conversation_id, None)
             self._persist_draft_records()
             self._attachments = []

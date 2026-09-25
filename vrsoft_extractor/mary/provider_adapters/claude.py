@@ -134,11 +134,15 @@ class ClaudeProvider(AgentProvider):
         else:
             from ..direct_sources import existing_off_direct_source_roots
 
+            canonical_roots = (
+                existing_off_direct_source_roots(self.knowledge_root)
+                if self.knowledge_root
+                else ()
+            )
             off_roots = list(image_roots)
-            if self.knowledge_root:
-                for _name, canon_root in existing_off_direct_source_roots(self.knowledge_root):
-                    if canon_root not in off_roots:
-                        off_roots.append(canon_root)
+            for _name, canon_root in canonical_roots:
+                if canon_root not in off_roots:
+                    off_roots.append(canon_root)
             for root in off_roots:
                 command.extend(["--add-dir", str(root)])
             permission_mode = {
@@ -147,6 +151,13 @@ class ClaudeProvider(AgentProvider):
             }.get(preset.sandbox)
             if permission_mode:
                 command.extend(["--permission-mode", permission_mode])
+            if preset.sandbox == "workspace-write" and canonical_roots:
+                denied_sources = [
+                    f"{tool}({canon_root}/**)"
+                    for _name, canon_root in canonical_roots
+                    for tool in ("Edit", "Write")
+                ]
+                command.extend(["--disallowedTools", ",".join(denied_sources)])
         if self.knowledge_root:
             from ..knowledge_access import mcp_command
             mcp_args = mcp_command(
