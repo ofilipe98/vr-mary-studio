@@ -11,6 +11,11 @@ Item {
 
     property var modelData: ({})
     property bool groupExpanded: false
+    // Disclosure state is owned by VrChatActivity (keyed by item id) so a
+    // streamed activityData update cannot silently reset an expanded group.
+    property alias disclosureExpanded: root.groupExpanded
+    property var disclosureHost: null
+    signal disclosureToggled(bool expanded)
 
     readonly property var childItems: modelData.items || []
     readonly property int childCount: childItems.length || Number(modelData.memberCount || 0)
@@ -26,6 +31,27 @@ Item {
         ? frontend.reduceMotion : false
 
     implicitHeight: mainColumn.implicitHeight
+
+    function toggleDisclosure() {
+        if (!root.canExpand)
+            return
+        root.groupExpanded = !root.groupExpanded
+        root.disclosureToggled(root.groupExpanded)
+    }
+
+    function restoreMemberDisclosure(loader) {
+        var host = root.disclosureHost
+        if (!host || !loader || !loader.item)
+            return
+        loader.item.disclosureExpanded = host.isDisclosureExpanded(loader.disclosureKey)
+    }
+
+    function syncMemberDisclosures() {
+        for (var i = 0; i < membersRepeater.count; ++i)
+            restoreMemberDisclosure(membersRepeater.itemAt(i))
+    }
+
+    onDisclosureHostChanged: root.syncMemberDisclosures()
 
     function resolveIcon() {
         if (root.isError) return "circleAlert"
@@ -54,8 +80,8 @@ Item {
             Accessible.description: root.groupExpanded ? "Recolher grupo" : "Expandir grupo"
             border.width: activeFocus ? 1 : 0
             border.color: Theme.palette.focus
-            Keys.onReturnPressed: { if (root.canExpand) root.groupExpanded = !root.groupExpanded }
-            Keys.onSpacePressed: { if (root.canExpand) root.groupExpanded = !root.groupExpanded }
+            Keys.onReturnPressed: root.toggleDisclosure()
+            Keys.onSpacePressed: root.toggleDisclosure()
 
             RowLayout {
                 anchors.fill: parent
@@ -117,9 +143,7 @@ Item {
             }
 
             HoverHandler { id: hover; cursorShape: Qt.PointingHandCursor }
-            TapHandler {
-                onTapped: { if (root.canExpand) root.groupExpanded = !root.groupExpanded }
-            }
+            TapHandler { onTapped: root.toggleDisclosure() }
         }
 
         ColumnLayout {
@@ -130,17 +154,22 @@ Item {
             spacing: Theme.scaledGeometry(4)
 
             Repeater {
+                id: membersRepeater
                 model: root.childItems
 
                 Loader {
                     id: childLoader
                     required property var modelData
                     Layout.fillWidth: true
+                    readonly property string disclosureKey: root.disclosureHost
+                        ? root.disclosureHost.disclosureKeyFor(childLoader.modelData) : ""
                     sourceComponent: {
                         var t = String(modelData.type || modelData.itemType || "")
                         if (t === "commandExecution" || modelData.command) return subCommandComponent
                         return subToolComponent
                     }
+                    onLoaded: root.restoreMemberDisclosure(childLoader)
+                    onDisclosureKeyChanged: root.restoreMemberDisclosure(childLoader)
                     // A real binding (not an onLoaded assignment) so member rows
                     // that are reused when the group updates keep showing the
                     // current event data.
@@ -150,6 +179,14 @@ Item {
                         value: childLoader.modelData
                         when: childLoader.item !== null
                         restoreMode: Binding.RestoreNone
+                    }
+                    Connections {
+                        target: childLoader.item
+                        function onDisclosureToggled(expanded) {
+                            var host = root.disclosureHost
+                            if (host && childLoader.disclosureKey !== "")
+                                host.setDisclosureExpanded(childLoader.disclosureKey, expanded)
+                        }
                     }
                 }
             }

@@ -15,10 +15,20 @@ Rectangle {
     property string taskStep: ""
     property bool running: false
     property bool expanded: false
+    // Identity of the rendered activity (messageKey). Delegate reuse across
+    // messages must not leak expanded rows into another conversation row.
+    property string scopeKey: ""
+    // Row disclosure state keyed by item id, owned by the activity instead of
+    // the transient Repeater delegates so streamed activityData updates that
+    // rebuild every row never silently collapse an expanded row.
+    property var disclosureIds: ({})
     readonly property string headerLabel: root.headerText()
     readonly property bool reduceMotion: typeof frontend !== "undefined" && frontend !== null
         ? frontend.reduceMotion : false
     signal toggleRequested()
+    signal disclosureToggled(bool expanded)
+
+    onScopeKeyChanged: root.resetDisclosure()
 
     implicitHeight: content.implicitHeight
     color: "transparent"
@@ -137,6 +147,10 @@ Rectangle {
                     id: activityItemLoader
                     required property var modelData
                     Layout.fillWidth: true
+                    readonly property string disclosureKey: root.disclosureKeyFor(activityItemLoader.modelData)
+                    // Mirrors the commentary branch of sourceComponent: only
+                    // cards expose disclosureHost/disclosureExpanded.
+                    readonly property bool supportsDisclosure: String(activityItemLoader.modelData.kind || "") !== "commentary"
                     sourceComponent: {
                         var k = String(modelData.kind || "")
                         var t = String(modelData.itemType || "")
@@ -146,8 +160,30 @@ Rectangle {
                         if (t === "commandExecution" || k === "command") return commandCardComponent
                         return toolCardComponent
                     }
+                    onModelDataChanged: root.restoreDisclosure(activityItemLoader)
+                    onDisclosureKeyChanged: root.restoreDisclosure(activityItemLoader)
                     onLoaded: {
-                        if (item) item.modelData = activityItemLoader.modelData
+                        if (item && activityItemLoader.supportsDisclosure)
+                            item.disclosureHost = root
+                        root.restoreDisclosure(activityItemLoader)
+                    }
+                    // A real binding (not an onLoaded assignment) so a reused
+                    // delegate always renders the current event data.
+                    Binding {
+                        target: activityItemLoader.item
+                        property: "modelData"
+                        value: activityItemLoader.modelData
+                        when: activityItemLoader.item !== null
+                        restoreMode: Binding.RestoreNone
+                    }
+                    Connections {
+                        target: activityItemLoader.item
+                        function onDisclosureToggled(expanded) {
+                            if (activityItemLoader.disclosureKey === "")
+                                return
+                            root.setDisclosureExpanded(activityItemLoader.disclosureKey, expanded)
+                            root.disclosureToggled(expanded)
+                        }
                     }
                 }
             }
@@ -284,5 +320,40 @@ Rectangle {
 
         // Successful settled work is disclosed by the Concluído em ... header.
         return []
+    }
+
+    function disclosureKeyFor(item) {
+        if (!item)
+            return ""
+        var id = item.id
+        if (id === undefined || id === null)
+            return ""
+        var key = String(id)
+        return key.length > 0 ? key : ""
+    }
+
+    function isDisclosureExpanded(key) {
+        return key !== "" && root.disclosureIds[key] === true
+    }
+
+    function setDisclosureExpanded(key, expanded) {
+        if (key === "")
+            return
+        var next = {}
+        for (var current in root.disclosureIds)
+            next[current] = root.disclosureIds[current]
+        if (expanded) next[key] = true
+        else delete next[key]
+        root.disclosureIds = next
+    }
+
+    function resetDisclosure() {
+        root.disclosureIds = ({})
+    }
+
+    function restoreDisclosure(loader) {
+        if (!loader || !loader.item || !loader.supportsDisclosure)
+            return
+        loader.item.disclosureExpanded = root.isDisclosureExpanded(loader.disclosureKey)
     }
 }

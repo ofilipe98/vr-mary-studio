@@ -13,6 +13,11 @@ Item {
     objectName: "toolCard"
     property var modelData: ({})
     property bool detailExpanded: false
+    // Disclosure state is owned by VrChatActivity (keyed by item id) so a
+    // streamed activityData update cannot silently reset an expanded row.
+    property alias disclosureExpanded: root.detailExpanded
+    property var disclosureHost: null
+    signal disclosureToggled(bool expanded)
     readonly property string titleText: String(modelData.text || modelData.title || "Atividade")
     readonly property string subtitleText: String(modelData.subtitle || "")
     readonly property string detailText: String(modelData.detail || modelData.output || "")
@@ -54,6 +59,13 @@ Item {
 
     implicitHeight: mainColumn.implicitHeight
 
+    function toggleDisclosure() {
+        if (!root.canExpand)
+            return
+        root.detailExpanded = !root.detailExpanded
+        root.disclosureToggled(root.detailExpanded)
+    }
+
     ColumnLayout {
         id: mainColumn
         anchors.left: parent.left
@@ -73,8 +85,8 @@ Item {
             Accessible.description: root.detailExpanded ? "Recolher atividade" : "Expandir atividade"
             border.width: activeFocus ? 1 : 0
             border.color: Theme.palette.focus
-            Keys.onReturnPressed: { if (root.canExpand) root.detailExpanded = !root.detailExpanded }
-            Keys.onSpacePressed: { if (root.canExpand) root.detailExpanded = !root.detailExpanded }
+            Keys.onReturnPressed: root.toggleDisclosure()
+            Keys.onSpacePressed: root.toggleDisclosure()
 
             RowLayout {
                 anchors.fill: parent
@@ -132,9 +144,7 @@ Item {
                 }
             }
             HoverHandler { id: hover; cursorShape: Qt.PointingHandCursor }
-            TapHandler {
-                onTapped: { if (root.canExpand) root.detailExpanded = !root.detailExpanded }
-            }
+            TapHandler { onTapped: root.toggleDisclosure() }
         }
 
         Rectangle {

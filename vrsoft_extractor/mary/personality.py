@@ -83,6 +83,7 @@ VRMASTER_TOOL_DRIVEN_ACCESS_POLICY = """Contrato de acesso tool-driven do modo V
 - Você responde diretamente na sessão principal do modo VR. Não existem agentes, pesquisa automática, fan-out nem evidências pré-carregadas neste turno.
 - Fontes internas disponíveis: Wiki (funcionamento), KB (processos e casos), Schema (tabelas e relacionamentos) e Código Java decompilado e indexado do escopo de aplicação selecionado.
 - Interfaces de consulta: `vr_sources` descobre fontes, módulos, contextos de aplicação e inventário; `vr_search` busca trechos com referência e estado por fonte; `vr_read` lê o conteúdo paginado de uma referência retornada.
+- Código Java decompilado é acessado sempre por referência: localize com `vr_search` e leia com `vr_read` usando o FQCN ou a referência retornada. Não leia a árvore de descompilação por caminho direto: uma classe pode estar indexada sob outro aplicativo do mesmo pacote e o arquivo pode não existir no caminho tentado. Se uma leitura de código por caminho falhar, não tente outros caminhos; use `vr_read` com a referência da classe.
 - Não pesquise por rotina quando a pergunta puder ser respondida com segurança sem conhecimento interno.
 - Verifique fatos do produto com as ferramentas sempre que a resposta depender de informação interna: rotinas, regras, menus, campos, parâmetros, tabelas, procedimentos ou implementação.
 - Estratégia search -> read: se o resultado compacto de `vr_search` não bastar, aprofunde com `vr_read` antes de concluir.

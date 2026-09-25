@@ -2031,6 +2031,13 @@ class ChatOrchestrator:
                 + f"Para uma busca estruturada, use `{search_tool}`. "
                 + "Quando as evidências fornecidas não forem suficientes, pesquise "
                 + f"diretamente na pasta com leitura/busca ou execute `{search_tool}`. "
+                + "PARA CÓDIGO JAVA DECOMPILADO, use as ferramentas VR `vr_sources`, "
+                + "`vr_search` e `vr_read` (servidor `vr-mary-studio`) com FQCN ou "
+                + "referência retornada; não leia a árvore de descompilação por caminho "
+                + "direto. Uma classe pode estar indexada sob outro aplicativo do mesmo "
+                + "pacote e o arquivo pode não existir no caminho tentado. Se uma leitura "
+                + "de código por caminho falhar, não tente outros caminhos: use `vr_read` "
+                + "com a referência da classe. "
             )
             follow_up = f"use `{search_tool}` ou leitura da pasta"
             fallback_note = (

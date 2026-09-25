@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 from pathlib import Path
@@ -456,6 +457,86 @@ def code_reference(row: dict, context: dict | None = None) -> str:
     return "code:" + (ctx + ":" if ctx else "") + row["source_key"]
 
 
+def _scope_content_hashes(
+    connection: Any, contexts: list[dict[str, Any]]
+) -> list[tuple[dict[str, Any], set[str]]]:
+    """Class contents physically present in each selected context's artifacts."""
+
+    scoped: list[tuple[dict[str, Any], set[str]]] = []
+    for context in contexts or []:
+        artifacts = list(context.get("artifacts") or [])
+        manifest = str(context.get("manifest_sha256") or "")
+        if not artifacts or not manifest:
+            continue
+        clause = " OR ".join(
+            "(jar_relative_path=? AND artifact_sha256=?)" for _ in artifacts
+        )
+        params: list[Any] = [manifest]
+        for artifact in artifacts:
+            params.extend((artifact["relative_path"], artifact["sha256"]))
+        rows = connection.execute(
+            "SELECT DISTINCT content_sha256 FROM class_occurrences "
+            "WHERE release_hash=? AND (" + clause + ")",
+            params,
+        ).fetchall()
+        hashes = {str(row[0]) for row in rows}
+        if hashes:
+            scoped.append((context, hashes))
+    return scoped
+
+
+def _lookup_canonical_rows(
+    connection: Any, contexts: list[dict[str, Any]], key: str
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    """Rows indexed under another artifact but present in the selected contexts.
+
+    Decompilation is content-addressed: a class identical across JARs of the
+    same release is indexed only once, under the canonical artifact. A scoped
+    lookup then finds nothing even though the class belongs to the selected
+    application. This resolves those rows through class occurrences.
+    """
+
+    scoped = _scope_content_hashes(connection, contexts)
+    packages = sorted(
+        {str(context.get("package_id") or "") for context, _ in scoped} - {""}
+    )
+    if not scoped or not packages:
+        return []
+    manifests = {
+        str(context.get("manifest_sha256") or "") for context, _ in scoped
+    } - {""}
+    placeholders = ",".join("?" for _ in packages)
+    candidates: list[Any] = []
+    seen_ids: set[int] = set()
+    for column in ("s.source_key", "s.qualified_name COLLATE NOCASE"):
+        for candidate in connection.execute(
+            "SELECT s.* FROM code_sources s WHERE s.release_id IN ("
+            + placeholders
+            + f") AND {column}=? LIMIT 6",
+            [*packages, key],
+        ).fetchall():
+            candidate_id = int(candidate["id"])
+            if candidate_id not in seen_ids:
+                seen_ids.add(candidate_id)
+                candidates.append(candidate)
+    matches: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for candidate in candidates:
+        if manifests and str(candidate["release_hash"]) not in manifests:
+            continue
+        try:
+            row_hashes = set(json.loads(candidate["content_hashes_json"] or "[]"))
+        except (TypeError, ValueError):
+            row_hashes = set()
+        if not row_hashes:
+            continue
+        context = next(
+            (ctx for ctx, hashes in scoped if hashes & row_hashes), None
+        )
+        if context is not None:
+            matches.append((dict(candidate), context))
+    return matches
+
+
 def read_code_source(root: Path, reference: str, *, application_contexts: list[dict[str, Any]] | None = None,
                      code_analysis_release: str = "current", code_analysis_manifest_sha256: str = "",
                      start_line: int | None = None, end_line: int | None = None,
@@ -490,14 +571,25 @@ def read_code_source(root: Path, reference: str, *, application_contexts: list[d
                     [*params, key, key],
                 ).fetchall()
 
-        rows = _lookup(contexts)
+        rows = [dict(item) for item in _lookup(contexts)]
         fallback_context: dict[str, Any] | None = None
         fallback_used = False
+        canonical_context: dict[str, Any] | None = None
+        canonical_used = False
+        if not rows and contexts:
+            with index.store.connect() as connection:
+                canonical_rows = _lookup_canonical_rows(connection, contexts, key)
+            if len(canonical_rows) == 1:
+                rows = [canonical_rows[0][0]]
+                canonical_context = canonical_rows[0][1]
+                canonical_used = True
+            elif len(canonical_rows) > 1:
+                rows = [match[0] for match in canonical_rows]
         if not rows and master_fallback and application_contexts:
             from ..code_context import master_fallback_context
             fallback_context = master_fallback_context(root, application_contexts)
             if fallback_context is not None:
-                rows = _lookup([fallback_context])
+                rows = [dict(item) for item in _lookup([fallback_context])]
                 fallback_used = bool(rows)
         if len(rows) != 1:
             selected = [str(c.get("label") or c.get("app_id") or "") for c in contexts or []]
@@ -507,7 +599,7 @@ def read_code_source(root: Path, reference: str, *, application_contexts: list[d
                        "em Aplicativos e use a referência retornada por vr_search.")
             return {"state": "scope_required" if len(rows) > 1 else "no_results", "reference": reference,
                     "selected_contexts": selected, "error": message}
-        row = dict(rows[0])
+        row = rows[0]
         status = ErpReleaseCatalog(root).status(row["release_id"], full_hash=not bool(contexts))
         if status.get("freshness") != "fresh" or status.get("release_manifest_sha256") != row["release_hash"] or (
                 code_analysis_manifest_sha256 and row["release_hash"] != code_analysis_manifest_sha256):
@@ -521,12 +613,24 @@ def read_code_source(root: Path, reference: str, *, application_contexts: list[d
         content = selected[offset:offset + size]
         first = start + selected[:offset].count("\n")
         last = first + content.count("\n")
-        ctx = _row_context(row, contexts) or (fallback_context if fallback_used else {}) or {}
-        canonical = code_reference(row, ctx)
-        return {"state": "available", "reference": reference, "evidence_id": canonical,
+        ctx = (
+            _row_context(row, contexts)
+            or (canonical_context if canonical_used else None)
+            or (fallback_context if fallback_used else None)
+            or {}
+        )
+        canonical_reference = code_reference(row, ctx)
+        fallback_payload: dict[str, Any] = {}
+        if fallback_used:
+            fallback_payload["fallback"] = "vrmaster"
+        elif canonical_used:
+            fallback_payload["fallback"] = "canonical"
+            fallback_payload["canonical_jar_relative_path"] = str(row["jar_relative_path"])
+        return {"state": "available", "reference": reference, "evidence_id": canonical_reference,
                 "source": "code", "source_id": row["source_key"], "document_id": 0,
                 "title": f"{ctx.get('label', 'Código')} · {row['release_id']} · {row['jar_relative_path']} · {row['qualified_name']} · linhas {first}-{last}"
-                + (" · fallback VRMaster" if fallback_used else ""),
+                + (" · fallback VRMaster" if fallback_used else "")
+                + (f" · cópia canônica {row['jar_relative_path']}" if canonical_used else ""),
                 "heading": row["qualified_name"], "qualified_name": row["qualified_name"],
                 "release_id": row["release_id"], "jar_relative_path": row["jar_relative_path"],
                 "source_sha256": row["source_sha256"], "release_manifest_sha256": row["release_hash"],
@@ -535,7 +639,7 @@ def read_code_source(root: Path, reference: str, *, application_contexts: list[d
                 "total_lines": len(lines), "total_chars": len(body), "cursor": offset, "limit": size,
                 "has_more": offset + len(content) < len(selected),
                 "next_cursor": offset + len(content) if offset + len(content) < len(selected) else None,
-                **({"fallback": "vrmaster"} if fallback_used else {}),
+                **fallback_payload,
                 "content": content}
     except (ValueError, RuntimeError) as exc:
         return {"state": "unavailable", "reference": reference, "error": str(exc)}

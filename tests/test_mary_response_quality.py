@@ -344,6 +344,16 @@ class TestPromptPrefixCache:
         assert "O fallback estruturado" in opencode_prompt
         assert "O fallback estruturado" not in codex_prompt
 
+    def test_reference_based_code_reads_are_mandatory_for_vr_prompts(
+        self, tmp_path: Path
+    ) -> None:
+        _settings, orchestrator = _orchestrator(tmp_path)
+        prompt = orchestrator._enrich_prompt("pergunta", supports_native_tools=False)
+        assert "Código Java decompilado é acessado sempre por referência" in prompt
+        assert "PARA CÓDIGO JAVA DECOMPILADO" in prompt
+        assert "não leia a árvore de descompilação por caminho" in prompt
+        assert "não tente outros caminhos" in prompt
+
     def test_native_image_prompt_keeps_tools_without_folder_or_script(
         self, tmp_path: Path
     ) -> None:

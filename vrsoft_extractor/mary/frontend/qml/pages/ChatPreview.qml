@@ -838,6 +838,9 @@ Item {
                 property bool followTail: true
                 property bool holdingReader: false
                 property real readerY: 0
+                // Suspends end re-pinning while a row disclosure settles so the
+                // toggled row never slides out from under the cursor.
+                property bool disclosureToggleSettling: false
                 // Active scroll anchor for collapsible message transitions
                 // (Mostrar mais, Mostrar menos, streaming termination).
                 // 0: none, 1: message completely above, 2: viewport inside message
@@ -852,7 +855,21 @@ Item {
                     holdingReader = false
                     readerTimer.stop()
                     tailTimer.stop()
+                    disclosureSettleTimer.stop()
+                    disclosureToggleSettling = false
                     clearAnchor()
+                }
+                function beginDisclosureToggle() {
+                    // Hold contentY while the row layout settles instead of
+                    // re-pinning the end (T3 Code suspends end maintenance for
+                    // the disclosure the same way).
+                    disclosureToggleSettling = true
+                    followTail = false
+                    tailTimer.stop()
+                    readerTimer.stop()
+                    holdingReader = false
+                    clearAnchor()
+                    disclosureSettleTimer.restart()
                 }
                 function clearAnchor() {
                     anchorMode = 0
@@ -955,6 +972,17 @@ Item {
                     interval: 120
                     onTriggered: { messageList.restoreReader(); messageList.holdingReader = false }
                 }
+                Timer {
+                    id: disclosureSettleTimer
+                    interval: Theme.fastDuration + 60
+                    onTriggered: {
+                        messageList.disclosureToggleSettling = false
+                        if (messageList.atYEnd) {
+                            messageList.followTail = true
+                            messageList.positionViewAtEnd()
+                        }
+                    }
+                }
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: chatHeader.bottom
@@ -1002,6 +1030,7 @@ Item {
                                 id: activityComponent
                                 VrChatActivity {
                                     property bool cardExpanded: false
+                                    scopeKey: messageItem.messageKey || "live"
                                     items: messageItem.messageKey ? messageItem.activityData : root.chatBridge.traceItems
                                     reasoningText: messageItem.messageKey ? "" : root.chatBridge.reasoningText
                                     statusText: messageItem.messageKey ? (messageItem.isStreaming ? "Trabalhando…" : "Concluído") : root.chatBridge.statusText
@@ -1010,6 +1039,7 @@ Item {
                                     running: messageItem.messageKey ? messageItem.isStreaming : root.chatBridge.turnRunning
                                     expanded: cardExpanded || (running && root.activityExpanded)
                                     onToggleRequested: cardExpanded = !cardExpanded
+                                    onDisclosureToggled: messageList.beginDisclosureToggle()
                                 }
                             }
                             Component {
@@ -1070,6 +1100,10 @@ Item {
                     }
                 }
                 onContentHeightChanged: {
+                    // Fixed settle window: a streamed growth must not extend it
+                    // and keep end maintenance suspended indefinitely.
+                    if (disclosureToggleSettling)
+                        return
                     if (followTail && !moving) tailTimer.restart()
                     else if (hasAnchor) applyAnchorAdjustment()
                     else if (holdingReader) Qt.callLater(restoreReader)

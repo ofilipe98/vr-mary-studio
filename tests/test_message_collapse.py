@@ -961,3 +961,119 @@ def test_rapid_toggles_maintain_coherent_state_and_delta(tmp_path):
             window.close()
         studio.close()
         chat.close()
+
+
+def _publish_opencode_tool(chat, conversation_id, execution_id, index, title, output):
+    from dataclasses import asdict
+
+    from vrsoft_extractor.mary.models import RuntimeEvent
+    from vrsoft_extractor.mary.provider_adapters.tool_normalizer import normalize_opencode_event
+
+    normalized = normalize_opencode_event(
+        {
+            "type": "tool_use",
+            "part": {
+                "tool": "read",
+                "callID": f"call-{index}",
+                "state": {
+                    "status": "completed",
+                    "title": title,
+                    "input": {"filePath": f"D:/x/File{index}.java"},
+                    "output": output,
+                    "time": {"start": index * 1000, "end": index * 1000 + 1500},
+                },
+            },
+        }
+    )
+    chat._on_runtime_event(
+        RuntimeEvent(
+            conversation_id,
+            "tool_event",
+            title,
+            {
+                "execution_id": execution_id,
+                "canonical_event": asdict(normalized),
+                "provider": "opencode",
+                "item": {"id": f"call-{index}", "name": "read", "type": "fileRead"},
+            },
+        )
+    )
+
+
+def test_tool_row_toggle_holds_position_and_survives_stream_updates(tmp_path):
+    """A tool row expands under the cursor and stays expanded across updates."""
+    from PySide6.QtCore import QPoint, QPointF
+
+    from vrsoft_extractor.mary.models import RuntimeEvent
+
+    _app, _settings, frontend, chat, studio = open_scrolling_chat(tmp_path)
+    window = None
+    try:
+        with patch.object(chat, "refreshModels"):
+            engine = create_engine(frontend, chat, studio)
+            assert engine.rootObjects(), [x.toString() for x in engine._qml_warnings]
+            window = engine.rootObjects()[0]
+            window.setWidth(1366)
+            window.setHeight(700)
+            QTest.qWait(500)
+
+            conversation_id = chat._selected_conversation_id()
+            execution_id = 41
+            chat._on_runtime_event(
+                RuntimeEvent(conversation_id, "turn_started", "", {"execution_id": execution_id})
+            )
+            for index in range(1, 4):
+                _publish_opencode_tool(
+                    chat, conversation_id, execution_id, index,
+                    f"Ler File{index}.java", f"saida {index}",
+                )
+            QTest.qWait(500)
+
+            timeline = window.findChild(QObject, "messageList")
+            timeline.setProperty("followTail", True)
+            timeline.positionViewAtEnd()
+            QTest.qWait(150)
+
+            rows = find_items(window.contentItem(), "toolCard")
+            assert rows, [x.toString() for x in engine._qml_warnings]
+            row = rows[0]
+            title = str(row.property("titleText"))
+
+            def chevron_point(target):
+                scene = target.mapToScene(QPointF(target.width() - 16, 14))
+                return QPoint(int(scene.x()), int(scene.y()))
+
+            content_y = float(timeline.property("contentY"))
+            row_y = float(row.mapToScene(QPointF(0, 0)).y())
+            QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, chevron_point(row))
+            QTest.qWait(400)
+            assert bool(row.property("detailExpanded")) is True
+            # The disclosure settles in place: no tail re-pin may slide the
+            # toggled row out from under the cursor.
+            assert abs(float(timeline.property("contentY")) - content_y) < 2.0
+            assert abs(float(row.mapToScene(QPointF(0, 0)).y()) - row_y) < 2.0
+
+            # A streamed tool event rebuilds every row; the expanded row must
+            # come back expanded instead of silently collapsing.
+            _publish_opencode_tool(
+                chat, conversation_id, execution_id, 4, "Ler File4.java", "saida 4"
+            )
+            QTest.qWait(400)
+            rebuilt = [
+                candidate
+                for candidate in find_items(window.contentItem(), "toolCard")
+                if str(candidate.property("titleText")) == title
+            ]
+            assert rebuilt
+            assert bool(rebuilt[0].property("detailExpanded")) is True
+
+            # Clicking the same chevron again collapses it for good.
+            QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, chevron_point(rebuilt[0]))
+            QTest.qWait(400)
+            assert bool(rebuilt[0].property("detailExpanded")) is False
+            assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
+    finally:
+        if window:
+            window.close()
+        studio.close()
+        chat.close()

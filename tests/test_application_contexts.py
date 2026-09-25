@@ -505,6 +505,70 @@ def test_read_code_source_falls_back_to_master(tmp_path):
     assert missing["state"] == "no_results"
 
 
+def indexed_contexts_with_duplicate_artifacts(root):
+    source = root / "incoming"
+    for name in ("VRA", "VRMaster"):
+        _jar(source / f"{name}.jar", b"shared")
+    catalog = ErpReleaseCatalog(root, expected_jar_count=2)
+    catalog.import_release("one", source)
+    plan = DecompilationBatchPlanner(root, catalog=catalog).plan("one", max_classes=20)
+    DecompilationBatchExecutor(
+        root, catalog=catalog, adapters=(_JavaSourceAdapter(),)
+    ).run(plan["plan_id"], limit=10)
+    index = JavaCodeIndex(root, catalog=catalog)
+    index.index_plan(plan["plan_id"])
+    composition = catalog.apps_store.get_package("one")["composition"]
+    selections = [{k: item[k] for k in ("app_id", "version", "variant_id")} | {"package_id": "one"}
+                  for item in composition]
+    return index, freeze_application_contexts(root, selections)
+
+
+def test_read_code_source_resolves_content_deduplicated_to_another_artifact(tmp_path):
+    index, contexts = indexed_contexts_with_duplicate_artifacts(tmp_path)
+    with index.store.connect() as connection:
+        canonical_jar = str(
+            connection.execute(
+                "SELECT jar_relative_path FROM code_sources WHERE qualified_name=? AND release_id='one'",
+                ("br.vr.Outer",),
+            ).fetchone()[0]
+        )
+
+    def _contexts_with_jar(jar):
+        return [
+            context
+            for context in contexts
+            if jar in {str(item["relative_path"]) for item in context["artifacts"]}
+        ]
+
+    owner = _contexts_with_jar(canonical_jar)
+    others = [context for context in contexts if context not in owner]
+    assert len(owner) == 1 and len(others) == 1
+
+    owner_payload = read_code_source(
+        tmp_path, "br.vr.Outer", application_contexts=owner, master_fallback=False
+    )
+    assert owner_payload["state"] == "available"
+    assert "fallback" not in owner_payload
+    assert owner_payload["jar_relative_path"] == canonical_jar
+    assert owner_payload["context_id"] == owner[0]["context_id"]
+    assert "class Outer" in owner_payload["content"]
+
+    other_payload = read_code_source(
+        tmp_path, "br.vr.Outer", application_contexts=others, master_fallback=False
+    )
+    assert other_payload["state"] == "available"
+    assert other_payload["fallback"] == "canonical"
+    assert other_payload["canonical_jar_relative_path"] == canonical_jar
+    assert "cópia canônica" in other_payload["title"]
+    assert other_payload["context_id"] == others[0]["context_id"]
+    assert "class Outer" in other_payload["content"]
+
+    missing = read_code_source(
+        tmp_path, "br.vr.Inexistente", application_contexts=others, master_fallback=False
+    )
+    assert missing["state"] == "no_results"
+
+
 def _arm_manual_context(bridge, context):  # noqa: F811
     bridge._selected_app_id = context["app_id"]
     bridge._selected_app_version = context["version"]
