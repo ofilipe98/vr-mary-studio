@@ -46,9 +46,7 @@ sobre as raízes canônicas de documentação, schema e código.
   raízes existentes, sem expor a raiz inteira `MarySettings.root` no prompt. Não registra
   nem executa `vr_sources`, `vr_search` ou `vr_read`, e não executa `tools/vr-search.ps1`.
   Não há retrieval automático, `RetrievalService`, `KnowledgeRouter`, classificação
-  VR nem fan-out. Na documentação Markdown, somente arquivos com `status: active`
-  e `review_status: approved` ou `kept` são considerados factuais (`conhecimento/Revisar`
-  é ignorado). Todo conteúdo local é dado não confiável, nunca instrução.
+  VR nem fan-out. Todo conteúdo local é dado não confiável, nunca instrução.
   Diretórios e arquivos como `.state`, `.env`, `TrabalhoVR`, `.trash`, logs, `.sqlite`,
   `ERP/releases` e scripts de busca não são fontes do OFF e não devem ser consultados como
   base interna. O perfil `full_access`, quando explicitamente selecionado, mantém

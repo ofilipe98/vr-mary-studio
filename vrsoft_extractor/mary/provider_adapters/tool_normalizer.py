@@ -715,6 +715,20 @@ def normalize_opencode_event(
             elif isinstance(input_data, str):
                 command_str = input_data
 
+        # File tools carry the target inside the state input (read/write/edit).
+        # Without it the presentation falls back to the raw tool name
+        # ("Ler read" instead of "Ler <arquivo>").
+        files: list[str] = []
+        if tool_type in {ToolType.FILE_READ, ToolType.FILE_CHANGE} and isinstance(input_data, dict):
+            candidate = (
+                input_data.get("filePath")
+                or input_data.get("file_path")
+                or input_data.get("file")
+                or input_data.get("path")
+            )
+            if candidate:
+                files.append(str(candidate))
+
         if state in ("error", "failed") or bool(error_data):
             event_kind = ToolEventKind.FAILED
             status = ToolStatus.FAILURE
@@ -766,6 +780,7 @@ def normalize_opencode_event(
             output_mode=output_mode,
             error=error_data,
             exit_code=exit_code,
+            files=files,
             metadata=dict(payload),
         )
 

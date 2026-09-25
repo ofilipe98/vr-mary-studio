@@ -101,6 +101,11 @@ class ActivityDomain:
         self._record_execution_event(event)
         if event.kind == "tool_event" and execution_id:
             if tool_entry is not None:
+                # OpenCode's CLI JSON stream only reports terminal tool snapshots
+                # (state.status=completed). The live row must stay streaming while
+                # the turn is active, otherwise the working header settles (and
+                # stops shimmering) after every completed tool.
+                turn_active = bool(self._turn_running)
                 assistant_count = sum(
                     1 for r in self._messages._items
                     if r.get("role") == "assistant"
@@ -129,7 +134,7 @@ class ActivityDomain:
                             break
                     if not found:
                         activity_data.append(tool_entry)
-                    is_running = any(entry.get("state") == "running" for entry in activity_data)
+                    is_running = turn_active or any(entry.get("state") == "running" for entry in activity_data)
                     self._messages.update_by_key(
                         "messageKey",
                         activity_key,
@@ -146,7 +151,7 @@ class ActivityDomain:
                         "createdAt": event.created_at,
                         "responseMode": "activity",
                         "messageKey": activity_key,
-                        "isStreaming": tool_entry["state"] == "running",
+                        "isStreaming": turn_active or tool_entry["state"] == "running",
                         "activityData": [tool_entry],
                     }
                     self._messages.append(new_activity)

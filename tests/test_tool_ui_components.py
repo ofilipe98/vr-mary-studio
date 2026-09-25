@@ -505,6 +505,51 @@ def test_vr_chat_activity_live_turn_keeps_tool_trace_visible(qml_env):
         app.processEvents()
 
 
+def _walk_items(item) -> list:
+    values = [item]
+    for child in item.childItems():
+        values.extend(_walk_items(child))
+    return values
+
+
+def test_live_activity_header_keeps_shimmer_until_turn_settles(qml_env):
+    app, engine, frontend, chat, studio = qml_env
+    warning_count = len(engine._qml_warnings)
+    _component, item = _create_activity(engine)
+    try:
+        item.setProperty("items", [
+            {
+                "id": "grep-1",
+                "kind": "tool",
+                "itemType": "tool",
+                "state": "completed",
+                "text": 'Pesquisou "NotaSaidaFiscalService"',
+            }
+        ])
+        item.setProperty("running", True)
+        item.setProperty("statusText", "Trabalhando…")
+        item.setProperty("elapsedLabel", "47s")
+        app.processEvents()
+
+        assert item.property("headerLabel") == "Trabalhando há 47s"
+        shimmers = [
+            node for node in _walk_items(item)
+            if "Shimmer" in node.metaObject().className()
+        ]
+        assert shimmers
+        assert shimmers[0].property("shimmering") is True
+
+        item.setProperty("running", False)
+        item.setProperty("statusText", "Concluído")
+        app.processEvents()
+        assert item.property("headerLabel") == "Concluído em 47s"
+        assert shimmers[0].property("shimmering") is False
+        assert len(engine._qml_warnings) == warning_count
+    finally:
+        item.deleteLater()
+        app.processEvents()
+
+
 def test_vr_chat_activity_divider_separates_header_from_visible_tools(qml_env):
     app, engine, frontend, chat, studio = qml_env
     warning_count = len(engine._qml_warnings)

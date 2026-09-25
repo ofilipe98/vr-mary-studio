@@ -20,6 +20,7 @@ from vrsoft_extractor.mary.tool_activity import (
     ToolStatus,
     ToolType,
 )
+from vrsoft_extractor.mary.tool_presentation import DEFAULT_PRESENTATION_REGISTRY
 
 
 def test_codex_command_execution_started_and_completed():
@@ -487,6 +488,75 @@ def test_opencode_dict_state_terminal_error_is_failure_with_stable_id():
     assert tool.status == ToolStatus.FAILURE
     assert tool.status != ToolStatus.RUNNING
     assert tool.error == "exit status 1"
+
+
+def test_opencode_file_tools_expose_their_target_path():
+    """OpenCode read/edit carry the file inside state.input; the presentation
+    must label the row with the file instead of the raw tool name."""
+    payload = {
+        "type": "tool_use",
+        "sessionID": "ses_current",
+        "part": {
+            "id": "prt_read_1",
+            "callID": "call_read_1",
+            "tool": "read",
+            "state": {
+                "status": "completed",
+                "input": {
+                    "filePath": "D:\\proj\\src\\NotaSaidaImpostoService.java",
+                    "offset": 452,
+                    "limit": 75,
+                },
+                "output": "<content>...</content>",
+                "title": "NotaSaidaImpostoService.java",
+            },
+        },
+    }
+    norm = normalize_opencode_event(payload, "conv_oc")
+    assert norm is not None
+    assert norm.type == ToolType.FILE_READ
+    assert norm.files == ["D:\\proj\\src\\NotaSaidaImpostoService.java"]
+
+    activity = ToolLifecycleReducer().reduce(norm)
+    presentation = DEFAULT_PRESENTATION_REGISTRY.format(activity)
+    assert presentation.text == "Ler D:\\proj\\src\\NotaSaidaImpostoService.java"
+    assert presentation.text != "Ler read"
+
+    edit_payload = {
+        "type": "tool_use",
+        "part": {
+            "id": "prt_edit_1",
+            "callID": "call_edit_1",
+            "tool": "edit",
+            "state": {
+                "status": "completed",
+                "input": {"filePath": "D:\\proj\\src\\Service.java"},
+                "output": "ok",
+            },
+        },
+    }
+    edit_norm = normalize_opencode_event(edit_payload, "conv_oc")
+    assert edit_norm is not None
+    assert edit_norm.type == ToolType.FILE_CHANGE
+    assert edit_norm.files == ["D:\\proj\\src\\Service.java"]
+
+    # Search tools keep their query target; a search root is not a read file.
+    grep_payload = {
+        "type": "tool_use",
+        "part": {
+            "id": "prt_grep_1",
+            "callID": "call_grep_1",
+            "tool": "grep",
+            "state": {
+                "status": "completed",
+                "input": {"pattern": "calcularImpostoItem", "path": "D:\\proj\\src"},
+                "output": "src/Service.java:10",
+            },
+        },
+    }
+    grep_norm = normalize_opencode_event(grep_payload, "conv_oc")
+    assert grep_norm is not None
+    assert grep_norm.files == []
 
 
 def test_claude_tool_use_and_result_lifecycle():
