@@ -175,10 +175,13 @@ QtObject {
     // `.1rem .35rem` padding. Qt paints fragment backgrounds as flat
     // rectangles, so VrInlineChipLayer repaints the chip with these
     // metrics; the horizontal padding is kept small because Qt does not
-    // reserve room for it in the text layout.
+    // reserve room for it in the text layout. The vertical padding stays
+    // unrounded: the browser chip box is the code font box plus
+    // 2*(.1rem + 1px border), measured at 19.19px for the 14px box of the
+    // default 12px code font.
     readonly property int inlineChipRadius: scaledGeometry(6)
     readonly property int inlineChipPadding: scaledGeometry(3)
-    readonly property int inlineChipInset: scaledGeometry(2)
+    readonly property real inlineChipPaddingY: 1.6 * selectedScale * interfaceScale
     // T3 Code composer surface: rounded-3xl = 1.5rem = 24px; the resting
     // context strip closes with rounded-b-2xl = 16px corners.
     readonly property int composerRadius: scaledGeometry(24)

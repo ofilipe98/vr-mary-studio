@@ -31,6 +31,7 @@ Item {
         anchors.fill: parent
         body: body
         ranges: control.chipRanges
+        fontPixelSize: control.fontPixelSize
     }
 
     TextEdit {

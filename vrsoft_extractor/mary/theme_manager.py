@@ -831,6 +831,7 @@ class ThemeManager(QObject):
                 base_palette[k] = _adjust_contrast(v, self._appearance_contrast, is_dark, is_border, is_text)
 
         base_palette["themeId"] = theme.id
+        base_palette["appearance"] = theme.appearance
         self._palette_cache = base_palette
         return base_palette
 

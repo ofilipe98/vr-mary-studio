@@ -793,6 +793,7 @@ def test_vr_shimmer_text_fluid_properties():
     from PySide6.QtQuick import QQuickView
 
     app = QApplication.instance() or QApplication([])
+    assert app is not None
     view = QQuickView()
     view.setSource(QUrl.fromLocalFile("vrsoft_extractor/mary/frontend/qml/components/VrShimmerText.qml"))
     item = view.rootObject()

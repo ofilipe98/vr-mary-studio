@@ -1116,7 +1116,8 @@ class ConversationsDomain:
             }
             for path in candidates[:32]
         )
-        self._current_project_index = next(
+        has_saved_scope = bool(self._preferences.contains("chat/current_project"))
+        matched_index = next(
             (
                 index
                 for index, item in enumerate(self._projects)
@@ -1125,8 +1126,23 @@ class ConversationsDomain:
                 and Path(item["path"]).resolve(strict=False)
                 == Path(saved_scope).expanduser().resolve(strict=False)
             ),
-            0,
+            -1,
         )
+        if matched_index >= 0:
+            self._current_project_index = matched_index
+        elif has_saved_scope and not saved_scope:
+            self._current_project_index = 0
+        else:
+            root_path = Path(self._settings.root).resolve(strict=False)
+            self._current_project_index = next(
+                (
+                    index
+                    for index, item in enumerate(self._projects)
+                    if item["path"]
+                    and Path(item["path"]).resolve(strict=False) == root_path
+                ),
+                0,
+            )
         selected_path = self._projects[self._current_project_index]["path"]
         self._project_scope = (
             Path(selected_path).resolve(strict=False) if selected_path else None

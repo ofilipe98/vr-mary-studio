@@ -2810,7 +2810,7 @@ Item {
                     height: Theme.scaledGeometry(54)
                     radius: Theme.scaledGeometry(7)
                     color: newChatProjectList.currentIndex === index
-                        ? (Theme.palette.appearance === "light" ? Theme.palette.selection : "#24384c")
+                        ? Theme.palette.selection
                         : (newProjectHover.hovered ? Theme.palette.chatControl : "transparent")
 
                     RowLayout {
