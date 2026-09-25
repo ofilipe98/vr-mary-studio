@@ -422,7 +422,9 @@ _T3_ROLE_MAP = {
     "chatControl": "toolbarControl", "chatBorder": "border", "chatDivider": "border",
     "messageSurface": "messageSurface", "codeSurface": "codeBackground", "codeHeader": "surfaceRaised",
     "link": "messageAction", "subtleText": "textMuted", "headingText": "text",
-    "inlineCodeSurface": "accentSurface", "quoteSurface": "surface",
+    # T3 `.chat-markdown :not(pre)>code` uses `--muted`, not the accent
+    # surface, so T3-derived themes keep the quiet chip fill.
+    "inlineCodeSurface": "muted", "quoteSurface": "surface",
     "text": "text", "mutedText": "textMuted", "border": "border", "hover": "toolbarControlHover",
     "selection": "secondary", "accentSoft": "accentSurface", "focus": "focus",
     "warning": "warning", "danger": "error", "navText": "sidebarForeground",

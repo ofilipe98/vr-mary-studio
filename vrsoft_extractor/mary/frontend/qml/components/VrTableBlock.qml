@@ -40,7 +40,7 @@ Column {
         ScrollBar.horizontal: VrScrollBar { }
         VrMarkdownContent {
             id: body
-            objectName: "tableBody"
+            bodyObjectName: "tableBody"
             width: root.expanded ? Math.max(viewport.width * 1.35, root.columns * 220) : viewport.width
             markdown: root.markdown
             // T3 `.chat-markdown table{font-size:.75rem}`.

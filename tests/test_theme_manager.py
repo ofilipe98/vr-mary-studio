@@ -185,6 +185,28 @@ def test_text_rendering_mode_persists_and_resets(tmp_path):
     assert restored.textRenderingMode == DEFAULT_TEXT_RENDERING
 
 
+def test_t3_themes_map_inline_code_to_the_muted_surface():
+    """T3 `.chat-markdown :not(pre)>code` fills with --muted, not the accent."""
+    for theme_id, colors in (("ocean", ("#233544", "#405567")),
+                             ("grove", ("#253e31", "#415f4f")),
+                             ("ember", ("#432e23", "#664c3f"))):
+        palette = BUILTIN_THEMES[theme_id].palette
+        assert palette["inlineCodeSurface"] == colors[0]
+        assert palette["inlineCodeSurface"] == palette["mutedSurface"]
+        assert palette["chatBorder"] == colors[1]
+
+    imported = {
+        "name": "Ocean import",
+        "appearance": "dark",
+        "colors": {"canvas": "#17212b", "accent": "#70b9ee", "muted": "#233544",
+                   "border": "#405567", "text": "#fffaff"},
+    }
+    ok, _message, theme = parse_imported_theme(json.dumps(imported))
+    assert ok and theme is not None
+    assert theme.palette["inlineCodeSurface"] == "#233544"
+    assert theme.palette["chatBorder"] == "#405567"
+
+
 def test_theme_lookup_and_duplication_are_independent_of_active_mode(tmp_path):
     mgr = _create_manager(tmp_path)
     mgr.setAppearanceMode("light")

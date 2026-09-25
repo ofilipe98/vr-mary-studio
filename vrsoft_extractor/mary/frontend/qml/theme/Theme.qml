@@ -171,6 +171,14 @@ QtObject {
     // T3 chat column: max-w-3xl = 48rem = 768px.
     readonly property int contentWidth: scaledGeometry(768)
     readonly property int messageRadius: scaledGeometry(16)
+    // T3 `.chat-markdown :not(pre)>code` chip: 0.375rem radius and
+    // `.1rem .35rem` padding. Qt paints fragment backgrounds as flat
+    // rectangles, so VrInlineChipLayer repaints the chip with these
+    // metrics; the horizontal padding is kept small because Qt does not
+    // reserve room for it in the text layout.
+    readonly property int inlineChipRadius: scaledGeometry(6)
+    readonly property int inlineChipPadding: scaledGeometry(3)
+    readonly property int inlineChipInset: scaledGeometry(2)
     // T3 Code composer surface: rounded-3xl = 1.5rem = 24px; the resting
     // context strip closes with rounded-b-2xl = 16px corners.
     readonly property int composerRadius: scaledGeometry(24)

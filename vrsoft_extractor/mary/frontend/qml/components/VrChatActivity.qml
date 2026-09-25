@@ -178,6 +178,8 @@ Rectangle {
                     }
                     Connections {
                         target: activityItemLoader.item
+                        // Commentary bodies have no disclosure signal.
+                        ignoreUnknownSignals: true
                         function onDisclosureToggled(expanded) {
                             if (activityItemLoader.disclosureKey === "")
                                 return
@@ -193,51 +195,15 @@ Rectangle {
     Component {
         id: commentaryComponent
 
-        TextEdit {
+        VrMarkdownContent {
             id: commentaryText
             property var modelData: ({})
             readonly property string displayText: (typeof frontend !== "undefined" && frontend)
                 ? frontend.displayMarkdown(String(modelData.text || ""))
                 : String(modelData.text || "")
-            text: displayText
-            textFormat: TextEdit.MarkdownText
-            readOnly: true
-            activeFocusOnPress: false
-            selectByMouse: true
-            wrapMode: TextEdit.Wrap
-            color: Theme.palette.text
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSize(13)
-            font.weight: Font.Normal
-            onLinkActivated: link => {
-                var value = String(link)
-                if (value.indexOf("vr-file:") === 0 || value.indexOf("file:") === 0) {
-                    if (typeof chat !== "undefined" && chat) chat.openFileReference(value)
-                } else if (value.indexOf("vr-code:") === 0) {
-                    if (typeof chat !== "undefined" && chat) chat.openDecompiledReference(value)
-                } else if (typeof studio !== "undefined" && studio) {
-                    studio.openExternalUrl(value)
-                }
-            }
-            onTextChanged: frontend.styleMessageDocument(
-                textDocument,
-                displayText
-            )
-            Connections {
-                target: frontend
-                function onThemeChanged() {
-                    frontend.styleMessageDocument(
-                        commentaryText.textDocument,
-                        commentaryText.displayText
-                    )
-                }
-                function onTypographyChanged() {
-                    frontend.styleMessageDocument(
-                        commentaryText.textDocument,
-                        commentaryText.displayText
-                    )
-                }
-            }
+            bodyObjectName: "activityCommentaryBody"
+            markdown: commentaryText.displayText
+            fontPixelSize: Theme.fontSize(13)
         }
     }
 

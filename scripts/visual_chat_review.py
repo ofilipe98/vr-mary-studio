@@ -87,6 +87,8 @@ Consulte também a [documentação do projeto](https://example.com/docs) para co
 
 O fluxo fica em `mary/frontend/file_links.py:12` e o método `calcularImpostoItem` permanece inline code.
 
+O erro ocorre na geração da NF: `setItensNota` e `AliquotaDAO.java:14-60`; o estado vira `false` no `VrChatActivity`.
+
 Fontes consultadas:
 - [MAPA DE FUNÇÕES](https://example.com/funcoes)
 - [Manual do PDV · permissões de operação](https://example.com/pdv)
@@ -124,11 +126,24 @@ Fontes consultadas:
                 timeline.positionViewAtEnd()
                 QTest.qWait(150)
                 window.grabWindow().save(str(output / f"sources-{width}x{height}.png"))
+            def capture_chips(name):
+                timeline.setProperty("followTail", False)
+                chips = find_items(window.contentItem(), "inlineChip")
+                assert chips, "inline chip layer must render the file/code mentions"
+                reveal_in_flickable(timeline, chips[-1], top_margin=240)
+                QTest.qWait(150)
+                window.grabWindow().save(str(output / name))
+
             frontend.setTheme("light")
             window.setWidth(1366)
             window.setHeight(768)
             QTest.qWait(300)
             window.grabWindow().save(str(output / "chat-light.png"))
+            capture_chips("chat-light-chips.png")
+            # T3 Ocean is the reference theme for the inline-code chip parity.
+            frontend.setTheme("ocean")
+            QTest.qWait(300)
+            capture_chips("chat-ocean-chips.png")
             frontend.setTheme("dark_orange")
             timeline.setProperty("followTail", False)
             timeline.setProperty("contentY", 0)
@@ -254,6 +269,29 @@ Fontes consultadas:
             if anonymous_titles:
                 raise RuntimeError(f"Anonymous tool titles rendered: {anonymous_titles}")
 
+            # Inline-code chips also render inside the activity commentary.
+            activity.setProperty("items", [
+                {
+                    "id": "tool-commentary",
+                    "kind": "commentary",
+                    "state": "completed",
+                    "text": "O estado vira `false` no `VrChatActivity`; veja `mary/frontend/file_links.py:12`.",
+                },
+            ])
+            activity.setProperty("statusText", "Concluído")
+            activity.setProperty("running", False)
+            activity.setProperty("expanded", True)
+            QTest.qWait(200)
+            reveal_in_flickable(timeline, activity)
+            QTest.qWait(150)
+            commentary_chips = find_items(activity, "inlineChip")
+            if len(commentary_chips) < 3:
+                raise RuntimeError(
+                    f"Activity commentary rendered {len(commentary_chips)} inline chips"
+                )
+            window.grabWindow().save(str(output / "activity-commentary-chips.png"))
+            captures.append("activity-commentary-chips.png")
+
             # Exercise the reference's two central output shapes: comparative
             # tables and a long, copyable plain-text implementation prompt.
             reference_markdown = """Recomendo separar **VR Ultra** e **Aplicativos e versões**, deixando o processamento de código dentro de cada versão.
@@ -366,6 +404,7 @@ Entregue o resultado e as evidências de validação.
                     "settled_expanded_visible_cards": expanded_cards,
                     "settled_disclosure_only": settled_disclosure_only,
                     "anonymous_title_count": len(anonymous_titles),
+                    "commentary_chips": len(commentary_chips),
                 },
                 "qml_warnings": len(errors),
             }, indent=2), encoding="utf-8")
@@ -374,6 +413,7 @@ Entregue o resultado e as evidências de validação.
             print("Tool-calling settled expanded visible cards:", expanded_cards)
             print("Tool-calling settled disclosure only:", settled_disclosure_only)
             print("Tool-calling anon:exec:noid titles:", len(anonymous_titles))
+            print("Activity commentary inline chips:", len(commentary_chips))
             print("QML warnings:", len(errors))
             print("Evidence:", output.resolve())
             window.close()

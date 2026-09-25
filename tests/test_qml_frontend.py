@@ -969,9 +969,7 @@ class QmlFrontendTest(unittest.TestCase):
                         fragment = iterator.fragment()
                         char_format = fragment.charFormat()
                         if char_format.fontFixedPitch():
-                            code_backgrounds.append(
-                                char_format.background().color().name()
-                            )
+                            code_backgrounds.append(char_format.background().style())
                         iterator += 1
                     block = block.next()
                 self.assertEqual(len(quote_blocks), 1)
@@ -980,7 +978,13 @@ class QmlFrontendTest(unittest.TestCase):
                 )
                 self.assertEqual(len(rule_blocks), 1)
                 self.assertEqual(rule_blocks[0].lineHeight(), 2.0)
-                self.assertIn("#26262b", code_backgrounds)
+                # Chips moved to VrInlineChipLayer: the document clears the flat
+                # fragment fill so the layer can round the corners and add the
+                # T3 hairline border.
+                self.assertEqual(code_backgrounds, [Qt.BrushStyle.NoBrush])
+                self.assertEqual(
+                    len(find_qml_items(content_item, "inlineChip", [])), 1
+                )
                 self.assertEqual(len(code_blocks), 0)
                 self.assertIn("def exemplo():", code_card.property("code"))
                 message_body.selectAll()

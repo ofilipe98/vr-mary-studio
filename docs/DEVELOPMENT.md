@@ -279,6 +279,14 @@ títulos em 1.25/1.125/1/0.875 rem, código inline e células de tabela em
 essas razões ao `QTextDocument`, então a hierarquia acompanha a escala da
 interface.
 
+O chip de código inline segue `:not(pre)>code` do T3: `inlineCodeSurface`
+vem do token `muted` do tema (não de `accentSurface`) e o `QTextCharFormat`
+não pinta o fundo no documento. `message_chip_ranges` reporta os intervalos
+e `VrInlineChipLayer.qml` repinta o chip arredondado com borda de 1 px atrás
+do texto em `VrMarkdownContent.qml` (mensagens, tabelas e comentário das
+atividades); seleção, links e cópia continuam nativos. O padding horizontal
+é aproximado porque o layout de texto do Qt não reserva esse espaço.
+
 Em VR e Ultra, o código do VRMaster (app central) é fallback do escopo
 selecionado: `code_context.master_fallback_context` resolve o contexto do mesmo
 pacote e a busca o consulta quando o escopo não retorna trechos, quando o texto

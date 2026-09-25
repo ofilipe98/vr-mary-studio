@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
 from PySide6.QtCore import QMetaObject, QObject, QSettings, Qt
-from PySide6.QtGui import QColor, QTextDocument
+from PySide6.QtGui import QColor, QTextCursor, QTextDocument
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 from vrsoft_extractor.mary.brand import brand_palette
@@ -22,6 +22,7 @@ from vrsoft_extractor.mary.frontend.studio import StudioBridge
 from vrsoft_extractor.mary.frontend.text_rendering import presentation_blocks
 from vrsoft_extractor.mary.frontend.text_rendering import CodeSyntaxHighlighter
 from vrsoft_extractor.mary.frontend.text_rendering import apply_message_document_style
+from vrsoft_extractor.mary.frontend.text_rendering import message_chip_ranges
 
 pytestmark = pytest.mark.qml
 
@@ -44,7 +45,9 @@ def test_file_reference_anchors_render_as_chips():
     chip = formats["file_links.py · L12"]
     assert chip.anchorHref() == "vr-file:mary/frontend/file_links.py#L12"
     assert chip.fontFamilies() == ["Consolas"]
-    assert chip.background().style() != Qt.BrushStyle.NoBrush
+    # t3code parity: VrInlineChipLayer paints the rounded fill and border, so
+    # the document itself carries no flat fragment background.
+    assert chip.background().style() == Qt.BrushStyle.NoBrush
     assert not chip.fontUnderline()
     # t3code parity: the chip follows the theme foreground, not the link accent.
     assert chip.foreground().color().name() == "#d6d6d9"
@@ -53,6 +56,29 @@ def test_file_reference_anchors_render_as_chips():
     assert link.anchorHref() == "https://example.com"
     assert link.background().style() == Qt.BrushStyle.NoBrush
     assert link.foreground().color().name() == "#ffad70"
+    ranges = message_chip_ranges(document)
+    assert [item["kind"] for item in ranges] == ["file"]
+    assert ranges[0]["end"] > ranges[0]["start"]
+
+
+def test_message_chip_ranges_select_inline_code_and_skip_fences():
+    QApplication.instance() or QApplication([])
+    markdown = (
+        "Em `setItensNota`, veja `AliquotaDAO.java:14-60` e `src/app.py:12`.\n\n"
+        "```python\npath = `não-é-chip`\n```\n"
+    )
+    document = QTextDocument()
+    document.setMarkdown(markdown)
+    apply_message_document_style(document, markdown, dark=True, monospace_family="Consolas")
+    ranges = message_chip_ranges(document)
+    assert [item["kind"] for item in ranges] == ["code", "code", "code"]
+    texts = []
+    cursor = QTextCursor(document)
+    for item in ranges:
+        cursor.setPosition(int(item["start"]))
+        cursor.setPosition(int(item["end"]), QTextCursor.KeepAnchor)
+        texts.append(cursor.selectedText())
+    assert texts == ["setItensNota", "AliquotaDAO.java:14-60", "src/app.py:12"]
 
 
 def test_message_style_follows_active_palette():
@@ -80,11 +106,12 @@ def test_message_style_follows_active_palette():
         block = block.next()
     assert formats["Título"].foreground().color().name() == "#0b1f33"
     assert formats["código"].foreground().color().name() == "#102a43"
-    assert formats["código"].background().color().name() == "#eef4ff"
+    assert formats["código"].background().style() == Qt.BrushStyle.NoBrush
     assert formats["link"].foreground().color().name() == "#0055ff"
     chip = formats["a.py"]
     assert chip.foreground().color().name() == "#102a43"
-    assert chip.background().color().name() == "#eef4ff"
+    assert chip.background().style() == Qt.BrushStyle.NoBrush
+    assert [item["kind"] for item in message_chip_ranges(document)] == ["code", "file"]
 
 
 def test_bridge_styles_messages_with_active_theme_palette(tmp_path):
@@ -793,3 +820,44 @@ def test_vr_shimmer_text_fluid_properties():
     # Non-running state turns off shimmering
     item.setProperty("running", False)
     assert not item.property("shimmering")
+
+
+def test_inline_code_chips_paint_t3_surface_and_border(tmp_path):
+    QApplication.instance() or QApplication([])
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "legacy")
+    prefs = QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+    cid = db.create_conversation("Chips", "codex", "gpt-5.6", settings.root)
+    db.add_message(cid, "assistant", "Em `setItensNota` e `mary/frontend/file_links.py:12`.")
+    frontend = FrontendBridge(settings, prefs, theme_override="ocean", initial_page="Chat VR")
+    chat = ChatBridge(settings, db, prefs)
+    studio = StudioBridge(settings, db, prefs)
+    window = None
+    try:
+        with patch.object(chat, "refreshModels"), patch.object(chat, "refreshUsageLimits", lambda *a, **k: None):
+            engine = create_engine(frontend, chat, studio)
+            assert engine.rootObjects(), [x.toString() for x in engine._qml_warnings]
+            window = engine.rootObjects()[0]
+            window.setWidth(1366)
+            window.setHeight(768)
+            content = window.contentItem()
+            assert wait_until(lambda: len(find_items(content, "inlineChip")) == 2)
+            chips = find_items(content, "inlineChip")
+            assert all(chip.property("radius") > 0 for chip in chips)
+            assert all(chip.property("width") > 0 and chip.property("height") > 0 for chip in chips)
+            # T3 `.chat-markdown :not(pre)>code`: muted fill + hairline border.
+            assert {chip.property("color").name() for chip in chips} == {"#233544"}
+            layer = find_items(content, "inlineChipLayer")[0]
+            assert layer.property("fillColor").name() == "#233544"
+            assert layer.property("borderColor").name() == "#405567"
+            assert layer.property("chipBorderWidth") == 1
+            body = find_items(content, "messageBody")[0]
+            assert body.property("paintedHeight") > 0
+            body.selectAll()
+            assert "setItensNota" in body.property("selectedText")
+            assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
+    finally:
+        if window:
+            window.close()
+        studio.close()
+        chat.close()

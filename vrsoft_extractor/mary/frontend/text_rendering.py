@@ -123,6 +123,44 @@ def _is_inline_code_reference_anchor(fragment_format: QTextCharFormat) -> bool:
     return href.startswith(_INLINE_CODE_REFERENCE_SCHEMES)
 
 
+def _chip_kind(fragment_format: QTextCharFormat) -> str:
+    """Classify one text fragment as a chip the QML overlay must paint."""
+    if _is_inline_code_reference_anchor(fragment_format):
+        href = str(fragment_format.anchorHref() or "").strip().casefold()
+        return "code-ref" if href.startswith("vr-code:") else "file"
+    return "code" if fragment_format.fontFixedPitch() else ""
+
+
+def message_chip_ranges(document: QTextDocument) -> list[dict[str, int | str]]:
+    """Locate inline-code and reference chips for the QML overlay layer.
+
+    Qt paints a flat rectangle per fragment; the layer re-paints these spans
+    with the T3 rounded chip (muted fill + hairline border) while the text
+    itself stays selectable and clickable.
+    """
+    if document is None:
+        return []
+    ranges: list[dict[str, int | str]] = []
+    block = document.firstBlock()
+    while block.isValid():
+        if block.blockFormat().hasProperty(int(QTextFormat.BlockCodeLanguage)):
+            block = block.next()
+            continue
+        block_end = block.position() + max(0, block.length() - 1)
+        iterator = block.begin()
+        while not iterator.atEnd():
+            fragment = iterator.fragment()
+            kind = _chip_kind(fragment.charFormat())
+            if kind:
+                start = fragment.position()
+                end = min(fragment.position() + fragment.length(), block_end)
+                if end > start:
+                    ranges.append({"start": start, "end": end, "kind": kind})
+            iterator += 1
+        block = block.next()
+    return ranges
+
+
 def fenced_blocks(markdown: str) -> list[dict[str, str]]:
     """Share fence boundaries between display normalization and QML cards."""
     lines = markdown.splitlines(keepends=True)
@@ -580,12 +618,13 @@ def _apply_message_document_style(
                 fragment_format.setForeground(code_text)
                 fragment_format.setBackground(code_background)
             elif fragment_format.fontFixedPitch():
-                # `.chat-markdown :not(pre)>code{font-size:.75rem}`.
+                # `.chat-markdown :not(pre)>code{font-size:.75rem}`. The fill
+                # comes from the QML chip layer, which can round the corners.
                 fragment_format.setFontFamilies([monospace_family])
                 fragment_format.setProperty(
                     QTextFormat.FontPixelSize, max(1, round(base_px * inline_code_ratio)))
                 fragment_format.setForeground(code_text)
-                fragment_format.setBackground(code_background)
+                fragment_format.clearBackground()
             elif _is_inline_code_reference_anchor(fragment_format):
                 # t3code parity: the chip reads like inline code and follows the
                 # active theme foreground instead of the fixed link accent.
@@ -593,7 +632,7 @@ def _apply_message_document_style(
                 fragment_format.setProperty(
                     QTextFormat.FontPixelSize, max(1, round(base_px * inline_code_ratio)))
                 fragment_format.setForeground(code_text)
-                fragment_format.setBackground(code_background)
+                fragment_format.clearBackground()
                 fragment_format.setFontUnderline(False)
             elif heading_level:
                 fragment_format.setProperty(QTextFormat.FontPixelSize,
