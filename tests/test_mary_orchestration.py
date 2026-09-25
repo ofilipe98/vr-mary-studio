@@ -2097,7 +2097,11 @@ def test_cancellation_message_reflects_response_mode(
     orchestrator = ChatOrchestrator(settings, database)
     orchestrator.providers = {"codex": CancellingProvider("codex")}
     conversation_id = orchestrator.new_conversation(
-        "codex", "sol", defer_provider_start=True
+        "codex",
+        "sol",
+        defer_provider_start=True,
+        vr_enabled=use_vr,
+        vr_mode="vr" if use_vr else "off",
     )
     events: list[RuntimeEvent] = []
     completed = threading.Event()
@@ -2740,7 +2744,7 @@ def test_off_mode_uses_off_native_column_when_use_vr_omitted(tmp_path: Path) -> 
     database.update_conversation(conv_id, native_id_vr="native-vr-sentinel")
 
     completed = threading.Event()
-    # Note: use_vr is omitted here (defaults to True); vr_mode="off" must resolve to effective_use_vr=False
+    # Note: use_vr is omitted here; vr_mode="off" must resolve to effective_use_vr=False
     orchestrator.send(
         conv_id,
         "Pergunta sem use_vr mas com vr_mode off",
@@ -2754,4 +2758,84 @@ def test_off_mode_uses_off_native_column_when_use_vr_omitted(tmp_path: Path) -> 
     assert row["native_id"].startswith("native:")
     assert row["native_id_vr"] == "native-vr-sentinel"
     assert provider.sent[0]["native_id"] == row["native_id"]
+    orchestrator.close()
+
+
+def test_persisted_off_mode_stays_off_without_mode_arguments(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex", final_text="Resposta OFF persistida")
+    orchestrator.providers = {"codex": provider}
+
+    conv_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_enabled=False, vr_mode="off"
+    )
+    database.update_conversation(conv_id, native_id_vr="native-vr-sentinel")
+
+    completed = threading.Event()
+    # No mode arguments: the persisted vr_mode="off" must win instead of
+    # silently switching the conversation to VR.
+    orchestrator.send(
+        conv_id,
+        "Pergunta persistida em OFF sem argumentos de modo",
+        lambda event: completed.set() if event.kind == "turn_completed" else None,
+    )
+    assert completed.wait(5)
+
+    assert len(provider.sent) == 1
+    sent = provider.sent[0]
+    assert sent["options"] is not None
+    assert sent["options"].vr_enabled is False
+    assert sent["options"].vr_mode == "off"
+    vr_tools = {"vr_sources", "vr_search", "vr_read"}
+    tool_names = {t.get("name") for t in (sent["options"].dynamic_tools or ())}
+    assert not vr_tools.intersection(tool_names)
+    assert "MODO VR ATIVO" not in sent["message"]
+    assert "FONTES LOCAIS OPCIONAIS — SOMENTE LEITURA:" in sent["message"]
+
+    row = database.get_conversation(conv_id)
+    assert row["vr_mode"] == "off"
+    assert row["vr_enabled"] == 0
+    assert row["native_id"].startswith("native:")
+    assert sent["native_id"] == row["native_id"]
+    assert row["native_id_vr"] == "native-vr-sentinel"
+    assert database.messages(conv_id)[-1]["response_mode"] == "native"
+    orchestrator.close()
+
+
+def test_use_vr_false_overrides_vr_mode_argument(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex", final_text="Resposta OFF forçada")
+    orchestrator.providers = {"codex": provider}
+
+    conv_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_enabled=True, vr_mode="vr"
+    )
+
+    completed = threading.Event()
+    orchestrator.send(
+        conv_id,
+        "Pergunta com use_vr False e vr_mode vr",
+        lambda event: completed.set() if event.kind == "turn_completed" else None,
+        use_vr=False,
+        vr_mode="vr",
+    )
+    assert completed.wait(5)
+
+    assert len(provider.sent) == 1
+    sent = provider.sent[0]
+    assert sent["options"] is not None
+    assert sent["options"].vr_enabled is False
+    assert sent["options"].vr_mode == "off"
+    vr_tools = {"vr_sources", "vr_search", "vr_read"}
+    tool_names = {t.get("name") for t in (sent["options"].dynamic_tools or ())}
+    assert not vr_tools.intersection(tool_names)
+    assert "MODO VR ATIVO" not in sent["message"]
+    assert database.messages(conv_id)[-1]["response_mode"] == "native"
+    row = database.get_conversation(conv_id)
+    assert row["vr_mode"] == "off"
+    assert row["vr_enabled"] == 0
     orchestrator.close()

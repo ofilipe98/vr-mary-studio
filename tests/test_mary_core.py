@@ -3158,7 +3158,10 @@ class MaryCoreTest(unittest.TestCase):
             ("claude", "Mary: ", claude),
         ):
             conversation_id = orchestrator.new_conversation(
-                provider_name, defer_provider_start=True
+                provider_name,
+                defer_provider_start=True,
+                vr_enabled=True,
+                vr_mode="vr",
             )
             typed = prefix + "Qual a função de entrada do operador?"
             provider_text = (

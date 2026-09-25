@@ -417,7 +417,7 @@ class ChatOrchestrator:
         skills: list[dict[str, Any]] | None = None,
         display_text: str = "",
         search_text: str | None = None,
-        use_vr: bool = True,
+        use_vr: bool | None = None,
         image_paths: list[str] | None = None,
         vr_mode: str = "",
         code_analysis_enabled: bool = False,
@@ -451,14 +451,20 @@ class ChatOrchestrator:
         existing_messages = self._context_messages(self.database.messages(conversation_id))
         stored_text = display_text.strip() or text
         explicit_mode = str(vr_mode or "").strip().casefold()
-        if not use_vr:
+        row_mode = str(conversation["vr_mode"] or "").strip().casefold()
+        if use_vr is False:
             resolved_vr_mode = "off"
         elif explicit_mode in ConversationOptions.VALID_VR_MODES:
             resolved_vr_mode = explicit_mode
-        else:
-            row_mode = str(conversation["vr_mode"] or "").strip().casefold()
+        elif use_vr is True:
             resolved_vr_mode = (
                 row_mode if row_mode in ("vr", "ultra") else "vr"
+            )
+        elif row_mode in ConversationOptions.VALID_VR_MODES:
+            resolved_vr_mode = row_mode
+        else:
+            resolved_vr_mode = (
+                "vr" if bool(conversation["vr_enabled"]) else "off"
             )
         current_row_mode = str(conversation["vr_mode"] or "").strip().casefold()
         if current_row_mode not in ConversationOptions.VALID_VR_MODES:
