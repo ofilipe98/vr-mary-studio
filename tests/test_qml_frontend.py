@@ -854,11 +854,12 @@ class QmlFrontendTest(unittest.TestCase):
                 "```\n"
             )
             database.add_message(conversation_id, "assistant", markdown)
-            chat_bridge = ChatBridge(
-                settings,
-                database,
-                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            chat_preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
             )
+            chat_preferences.setValue("chat/current_project", "")
+            chat_preferences.sync()
+            chat_bridge = ChatBridge(settings, database, chat_preferences)
             engine = create_engine(bridge, chat_bridge)
             self.application.processEvents()
             try:
@@ -1018,6 +1019,7 @@ class QmlFrontendTest(unittest.TestCase):
             preferences = QSettings(
                 str(root / "preferences.ini"), QSettings.IniFormat
             )
+            preferences.setValue("chat/current_project", "")
             bridge = ChatBridge(settings, database, preferences)
 
             self.assertEqual(bridge.conversationCount, 1)
@@ -1146,6 +1148,106 @@ class QmlFrontendTest(unittest.TestCase):
                 len(database.list_conversations(state="active")), before
             )
 
+    def test_default_project_is_vr_root_folder(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            settings.root.mkdir(parents=True)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            bridge = ChatBridge(settings, database, preferences)
+
+            self.assertEqual(bridge.projectItems[0]["label"], "Todos os projetos")
+            default_index = bridge.currentProjectIndex
+            self.assertGreater(default_index, 0)
+            self.assertEqual(
+                Path(bridge.projectItems[default_index]["path"]).resolve(),
+                settings.root.resolve(),
+            )
+            self.assertEqual(
+                bridge.selectedProject, bridge.projectItems[default_index]["label"]
+            )
+
+    def test_stored_project_scope_wins_over_vr_root_default(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            settings.root.mkdir(parents=True)
+            project = settings.root / "Cliente"
+            project.mkdir()
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            database.create_conversation(
+                "Conversa do projeto", "codex", "gpt-5.6", project
+            )
+
+            def bridge_for(stored: str, name: str) -> ChatBridge:
+                preferences = QSettings(str(root / name), QSettings.IniFormat)
+                preferences.setValue("chat/current_project", stored)
+                preferences.sync()
+                return ChatBridge(settings, database, preferences)
+
+            all_projects = bridge_for("", "prefs-all.ini")
+            self.assertEqual(all_projects.currentProjectIndex, 0)
+
+            saved = bridge_for(str(project), "prefs-saved.ini")
+            saved_index = next(
+                index
+                for index, item in enumerate(saved.projectItems)
+                if Path(item["path"]) == project
+            )
+            self.assertEqual(saved.currentProjectIndex, saved_index)
+
+            stale = bridge_for(str(settings.root / "Removido"), "prefs-stale.ini")
+            stale_index = next(
+                index
+                for index, item in enumerate(stale.projectItems)
+                if Path(item["path"]) == settings.root
+            )
+            self.assertEqual(stale.currentProjectIndex, stale_index)
+
+    def test_vr_root_project_stays_listed_and_selected_when_hidden(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            settings.root.mkdir(parents=True)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            preferences.setValue(
+                "chat/hidden_projects", json.dumps([str(settings.root)])
+            )
+            preferences.sync()
+            bridge = ChatBridge(settings, database, preferences)
+
+            root_index = next(
+                index
+                for index, item in enumerate(bridge.projectItems)
+                if Path(item["path"]) == settings.root
+            )
+            self.assertEqual(bridge.currentProjectIndex, root_index)
+            self.assertFalse(bridge.removeProject(root_index))
+            self.assertTrue(
+                any(
+                    Path(item["path"]) == settings.root
+                    for item in bridge.projectItems
+                )
+            )
+
     def test_chat_project_name_is_saved_and_restored(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1164,6 +1266,7 @@ class QmlFrontendTest(unittest.TestCase):
             preferences = QSettings(
                 str(root / "preferences.ini"), QSettings.IniFormat
             )
+            preferences.setValue("chat/current_project", "")
             bridge = ChatBridge(settings, database, preferences)
             project_index = next(
                 index
@@ -1305,6 +1408,7 @@ class QmlFrontendTest(unittest.TestCase):
             preferences = QSettings(
                 str(root / "preferences.ini"), QSettings.IniFormat
             )
+            preferences.setValue("chat/current_project", "")
             bridge = ChatBridge(settings, database, preferences)
 
             bridge.startNewChat()
@@ -1332,6 +1436,7 @@ class QmlFrontendTest(unittest.TestCase):
             preferences = QSettings(
                 str(root / "preferences.ini"), QSettings.IniFormat
             )
+            preferences.setValue("chat/current_project", "")
             bridge = ChatBridge(settings, database, preferences)
             conversation_id = bridge._orchestrator.new_conversation(
                 "codex", "sol", defer_provider_start=True, vr_mode="vr"

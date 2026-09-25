@@ -369,6 +369,8 @@ class ConversationsDomain:
         if index <= 0 or index >= len(self._projects):
             return False
         target = Path(self._projects[index]["path"]).resolve(strict=False)
+        if target == Path(self._settings.root).resolve(strict=False):
+            return False
         hidden = self._stored_project_paths("chat/hidden_projects")
         if target not in hidden:
             hidden.append(target)
@@ -382,7 +384,7 @@ class ConversationsDomain:
             if Path(item["path"]).expanduser().resolve(strict=False) != target
         ]
         self._store_project_entries(values)
-        self._preferences.setValue("chat/current_project", "")
+        self._preferences.remove("chat/current_project")
         self._preferences.sync()
         self._refresh_projects()
         self.refresh()
@@ -1024,6 +1026,7 @@ class ConversationsDomain:
         custom_colors: dict[Path, str] = {}
         custom_texts: dict[Path, str] = {}
         hidden_paths = set(self._stored_project_paths("chat/hidden_projects"))
+        hidden_paths.discard(Path(self._settings.root).resolve(strict=False))
 
         def include(
             value: object,

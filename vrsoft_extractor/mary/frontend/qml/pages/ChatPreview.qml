@@ -1188,8 +1188,11 @@ Item {
                     width: Math.min(implicitWidth, parent.width)
                     spacing: Theme.scaledGeometry(6)
                     Text {
+                        id: landingHeadingText
+                        objectName: "landingHeadingText"
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
+                        Layout.alignment: Qt.AlignTop
                         text: landingProjectButton.projectLabel.length
                             ? "Como posso ajudar no projeto" : "Como posso ajudar no"
                         color: Theme.palette.text
@@ -1205,6 +1208,7 @@ Item {
                         objectName: "landingProjectButton"
                         Layout.maximumWidth: landing.width * 0.55
                         Layout.minimumWidth: 0
+                        Layout.alignment: Qt.AlignTop
                         Layout.preferredWidth: implicitWidth
                         implicitWidth: contentItem.implicitWidth
                         implicitHeight: contentItem.implicitHeight
@@ -1230,6 +1234,7 @@ Item {
                             implicitHeight: linkText.implicitHeight
                             Text {
                                 id: linkText
+                                objectName: "landingProjectLink"
                                 text: landingProjectButton.projectLabel.length
                                     ? "<font color=\"" + Theme.palette.mutedText.toString() + "\">"
                                         + landingProjectButton.projectLabel.replace(/&/g, "&amp;")
@@ -1242,6 +1247,7 @@ Item {
                                 font.pixelSize: landing.headingSize
                                 font.weight: Font.Normal
                                 font.letterSpacing: Theme.tracking(landing.headingSize, Theme.trackingTight)
+                                lineHeight: Theme.headingLineHeight
                                 horizontalAlignment: Text.AlignLeft
                                 wrapMode: Text.WordWrap
                             }

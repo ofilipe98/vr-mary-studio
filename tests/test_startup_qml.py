@@ -253,8 +253,8 @@ class StartupQmlTest(unittest.TestCase):
             self.assertTrue(bootstrap_bridge.isReady)
             self.assertEqual(bootstrap_bridge.state, "ready")
 
-    def test_startup_catalog_stage_bar_is_determinate_without_fabricated_percent(self):
-        """The loading bar tracks the two real catalog stages, never a fake fraction."""
+    def test_startup_catalog_bar_keeps_indeterminate_loading_effect(self):
+        """The startup bar stays an animated loading beam, never a staged fill."""
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
             app_dir = root / "app"
@@ -282,14 +282,24 @@ class StartupQmlTest(unittest.TestCase):
 
             stage_bar = window.findChild(QObject, "startupCatalogProgress")
             self.assertIsNotNone(stage_bar)
-            # First stage has no exact denominator yet: still indeterminate.
             self.assertTrue(bool(stage_bar.property("indeterminate")))
-            self.assertEqual(int(stage_bar.property("to")), 2)
+            self.assertEqual(float(stage_bar.property("value")), 0.0)
 
             bootstrap_bridge._on_catalog_phase("loading_versions", 1, 3)
             self.application.processEvents()
-            self.assertFalse(bool(stage_bar.property("indeterminate")))
-            self.assertEqual(int(stage_bar.property("value")), 1)
+            self.assertTrue(bool(stage_bar.property("indeterminate")))
+            self.assertEqual(float(stage_bar.property("value")), 0.0)
+
+            # The stage caption row belongs to the determinate layout: gone.
+            loading_page = window.findChild(QObject, "startupLoadingPage")
+            self.assertIsNotNone(loading_page)
+            texts = [
+                str(item.property("text"))
+                for item in loading_page.findChildren(QObject)
+                if item.property("text") is not None
+            ]
+            self.assertNotIn("Etapas do catálogo", texts)
+            self.assertFalse(any("Etapa " in text for text in texts))
 
             # Ready destroys the loading page; the bridge state is authoritative.
             bootstrap_bridge._on_catalog_phase("ready", 1, 3)
