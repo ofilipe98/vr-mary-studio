@@ -156,9 +156,9 @@ Item {
         visible: composerCard.isCompact
         z: 0
         antialiasing: true
-        readonly property int topRadius: composerCard.radius
+        readonly property int topRadius: composerCard.compactInset
         readonly property int stripInset: composerCard.compactInset
-        readonly property int stripTop: composerCard.compactSurfaceHeight - Theme.spaceXs
+        readonly property int stripTop: composerCard.compactSurfaceHeight
         readonly property int stripRadius: composerCard.compactStripRadius
         readonly property color fillColor: Theme.palette.chatComposer
         readonly property color outlineColor: composerCard.page.composerDropActive
@@ -178,32 +178,41 @@ Item {
             var w = width
             var h = height
             if (w <= 0 || h <= 0) return
-            var top = Math.min(topRadius, w / 2, h / 2)
-            var inset = Math.min(stripInset, w / 3)
-            var strip = Math.max(top, Math.min(stripTop, h))
-            var sr = Math.min(stripRadius, (h - strip) / 2, (w - inset * 2) / 2)
-            var fillet = Math.max(0, Math.min(inset, strip - top, h - strip))
+            var strip = Math.max(0, Math.min(stripTop, h))
+            var top = Math.max(0, Math.min(topRadius, w / 2, strip / 2))
+            var inset = top
+            var sr = Math.max(0, Math.min(stripRadius, h - strip, (w - inset * 2) / 2))
+
             ctx.beginPath()
-            ctx.moveTo(top, 0)
+            ctx.moveTo(0, top)
+            // Canto superior esquerdo
+            ctx.arc(top, top, top, Math.PI, Math.PI * 1.5)
+            // Borda superior
             ctx.lineTo(w - top, 0)
-            ctx.arc(w - top, top, top, -Math.PI / 2, 0)
-            ctx.lineTo(w, strip - fillet)
-            if (fillet > 0)
-                ctx.arc(w - fillet, strip - fillet, fillet, 0, Math.PI / 2)
-            ctx.lineTo(w - inset, strip)
+            // Canto superior direito
+            ctx.arc(w - top, top, top, Math.PI * 1.5, Math.PI * 2)
+            // Borda lateral direita do card superior
+            ctx.lineTo(w, strip - top)
+            // Canto inferior direito do card superior (convexa até o inset)
+            ctx.arc(w - inset, strip - top, top, 0, Math.PI * 0.5)
+            // Borda lateral direita da bandeja de controles
             ctx.lineTo(w - inset, h - sr)
+            // Canto inferior direito da bandeja
             if (sr > 0)
-                ctx.arc(w - inset - sr, h - sr, sr, 0, Math.PI / 2)
+                ctx.arc(w - inset - sr, h - sr, sr, 0, Math.PI * 0.5)
+            // Borda inferior da bandeja
             ctx.lineTo(inset + sr, h)
+            // Canto inferior esquerdo da bandeja
             if (sr > 0)
-                ctx.arc(inset + sr, h - sr, sr, Math.PI / 2, Math.PI)
+                ctx.arc(inset + sr, h - sr, sr, Math.PI * 0.5, Math.PI)
+            // Borda lateral esquerda da bandeja de controles
             ctx.lineTo(inset, strip)
-            if (fillet > 0)
-                ctx.arc(inset, strip - fillet, fillet, Math.PI / 2, Math.PI)
+            // Canto inferior esquerdo do card superior (convexa saindo do inset até x = 0)
+            ctx.arc(inset, strip - top, top, Math.PI * 0.5, Math.PI)
+            // Borda lateral esquerda do card superior
             ctx.lineTo(0, top)
-            if (top > 0)
-                ctx.arc(top, top, top, Math.PI, Math.PI * 1.5)
             ctx.closePath()
+
             ctx.fillStyle = fillColor
             ctx.fill()
             ctx.strokeStyle = outlineColor
