@@ -1,0 +1,2 @@
+# Hooks executados pelo bash do Git; CRLF quebra a interpretação.
+.githooks/** text eol=lf

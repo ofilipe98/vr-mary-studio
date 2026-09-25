@@ -193,6 +193,24 @@ O fluxo reutiliza a infraestrutura de tarefas do `ChatBridge`
 .\.venv\Scripts\python.exe -m pytest tests/test_knowledge_transfer.py tests/test_knowledge_transfer_bridge.py -q
 ```
 
+## Versionamento
+
+A versão `X.Y.Z-N` vive em quatro arquivos que devem permanecer idênticos:
+`pyproject.toml`, `vrsoft_extractor/__init__.py`, `installer/VRNorteStudio.iss` e
+`installer/VRNorteStudio.version.txt` (também `filevers`/`prodvers`).
+
+- **Cada commit incrementa o build**: o hook versionado em `.githooks/pre-commit`
+  (ativado por `git config core.hooksPath .githooks`) roda
+  `scripts/bump_version.py --commit` e inclui os quatro arquivos no mesmo commit.
+  Use `SKIP_VERSION_BUMP=1 git commit ...` para pular; se algum dos quatro arquivos
+  já estiver staged, o hook não altera a versão.
+- **Promoção dev → main incrementa a versão**: antes do PR de promoção, rode
+  `.\.venv\Scripts\python.exe scripts\bump_version.py --promote`
+  (`0.6.7-N` → `0.6.8-1`) e commite o resultado; os próximos commits seguem
+  `0.6.8-2`, `0.6.8-3` ...
+- Outros comandos: `--set X.Y.Z-N` define a versão e `--show` apenas exibe.
+  `tests/test_bump_version.py` e `tests/test_utils.py` validam a sincronização.
+
 ## Instalação e testes
 
 ```powershell

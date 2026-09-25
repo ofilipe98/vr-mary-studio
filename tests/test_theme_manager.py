@@ -50,7 +50,7 @@ def test_theme_manager_defaults():
         assert mgr.panelAnimationDurationMs == 0
         assert mgr.typographyAdvanced is False
         assert mgr.wordWrap is True
-        assert mgr.environmentIdentification == "pill"
+        assert mgr.environmentIdentification == "artwork"
 
 
 def test_independent_theme_and_mode_switching():
@@ -104,7 +104,7 @@ def test_contrast_and_glass_opacity():
         mgr.setEnvironmentIdentification("artwork")
         assert mgr.environmentIdentification == "artwork"
         mgr.resetSetting("environment")
-        assert mgr.environmentIdentification == "pill"
+        assert mgr.environmentIdentification == "artwork"
 
 
 def test_panel_animations_and_reduce_motion():

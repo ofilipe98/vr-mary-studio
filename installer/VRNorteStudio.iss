@@ -1,5 +1,5 @@
 #define MyAppName "VR Norte Studio"
-#define MyAppVersion "0.6.7-1"
+#define MyAppVersion "0.6.7-2"
 #define MyAppPublisher "VRNorte"
 #define MyAppExeName "VRNorteStudio.exe"
 

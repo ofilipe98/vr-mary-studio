@@ -27,11 +27,11 @@ ColumnLayout {
             }
             AppearanceRow {
                 title: "Identificação do ambiente"; description: "Escolha como identificar os ambientes Dev e Nightly."
-                resetKey: "environment"; resetVisible: frontend.environmentIdentification !== "pill"; divider: false
+                resetKey: "environment"; resetVisible: frontend.environmentIdentification !== "artwork"; divider: false
                 AppearanceCombo {
                     objectName: "environmentIdentificationCombo"
-                    model: ["Selo de versão", "Destaque no logo", "Nenhuma"]
-                    readonly property var values: ["pill", "artwork", "none"]
+                    model: ["Destaque no logo", "Nenhuma"]
+                    readonly property var values: ["artwork", "none"]
                     currentIndex: values.indexOf(frontend.environmentIdentification)
                     onActivated: index => frontend.setEnvironmentIdentification(values[index])
                 }

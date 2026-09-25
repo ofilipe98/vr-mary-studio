@@ -143,47 +143,6 @@ Item {
             font.weight: Font.Bold
             renderType: Theme.textRenderType
         }
-
-        Rectangle {
-            objectName: "environmentVersionPill"
-            visible: root.width >= Theme.scaledGeometry(600) && typeof frontend !== "undefined" && frontend && frontend.environmentStage !== "" && frontend.environmentIdentification === "pill"
-            implicitWidth: stageLabel.implicitWidth + 8
-            implicitHeight: 20
-            radius: 4
-            color: Theme.palette.accentSoft
-
-            Text {
-                id: stageLabel
-                anchors.centerIn: parent
-                text: (typeof frontend !== "undefined" && frontend ? frontend.appVersion : "v0.6.3") + " " + (typeof frontend !== "undefined" && frontend ? frontend.environmentStage : "Dev")
-                color: Theme.palette.text
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSizeMicro
-                font.weight: Font.Medium
-                renderType: Theme.textRenderType
-            }
-        }
-
-        Rectangle {
-            visible: root.width >= Theme.scaledGeometry(600) && !(typeof frontend !== "undefined" && frontend && frontend.environmentStage !== "" && frontend.environmentIdentification === "pill")
-            implicitWidth: defaultBadge.implicitWidth + 10
-            implicitHeight: 20
-            radius: 10
-            color: Theme.palette.surfaceRaised
-            border.width: 1
-            border.color: Theme.palette.border
-
-            Text {
-                id: defaultBadge
-                anchors.centerIn: parent
-                text: (typeof frontend !== "undefined" && frontend) ? (frontend.appVersion + " Dev") : "v0.6.3 Dev"
-                color: Theme.palette.mutedText
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSizeMicro
-                font.weight: Font.Medium
-                renderType: Theme.textRenderType
-            }
-        }
     }
 
     // Center breadcrumb row (Chat page)
