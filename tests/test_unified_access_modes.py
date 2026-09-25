@@ -834,6 +834,8 @@ def test_switching_vr_off_vr_keeps_separate_tool_contracts(tmp_path: Path):
         assert done.wait(30), "turno não concluiu"
 
     try:
+        # 1. Turno OFF com marcador único
+        provider.final_text = "RESPOSTA_OFF_MARCADOR_111"
         _send(False, "Pergunta nativa")
         row = database.get_conversation(conv_id)
         assert row["native_id_vr"] == "native-vr"
@@ -845,8 +847,11 @@ def test_switching_vr_off_vr_keeps_separate_tool_contracts(tmp_path: Path):
             in {VR_SOURCES_TOOL_NAME, VR_SEARCH_TOOL_NAME, VR_READ_TOOL_NAME}
             for tool in off_options.dynamic_tools
         )
-        assert provider.sent[0]["native_id"] == row["native_id"] != "native-vr"
+        off_native_id = row["native_id"]
+        assert provider.sent[0]["native_id"] == off_native_id != "native-vr"
 
+        # 2. Retorno ao VR: native-vr mantém o mesmo ID, resposta OFF aparece como delta
+        provider.final_text = "RESPOSTA_VR_MARCADOR_222"
         orchestrator.update_vr_mode(conv_id, True)
         _send(True, "De volta ao VR")
         assert provider.sent[-1]["native_id"] == "native-vr"
@@ -854,8 +859,119 @@ def test_switching_vr_off_vr_keeps_separate_tool_contracts(tmp_path: Path):
         assert {
             tool.get("name") for tool in vr_options.dynamic_tools
         } >= {VR_SOURCES_TOOL_NAME, VR_SEARCH_TOOL_NAME, VR_READ_TOOL_NAME}
+        vr_sent_message = provider.sent[-1]["message"]
+        assert "CONTEXTO SINCRONIZADO ENTRE MODOS" in vr_sent_message
+        assert "RESPOSTA_OFF_MARCADOR_111" in vr_sent_message
+        assert "USER: Pergunta nativa" in vr_sent_message
+
+        # 3. Cenário inverso OFF→VR→OFF: resposta VR aparece ao voltar ao native_id OFF
+        provider.final_text = "RESPOSTA_OFF_MARCADOR_333"
+        orchestrator.update_vr_mode(conv_id, False)
+        _send(False, "De volta ao OFF")
+        assert provider.sent[-1]["native_id"] == off_native_id
+        off_sent_message = provider.sent[-1]["message"]
+        assert "CONTEXTO SINCRONIZADO ENTRE MODOS" in off_sent_message
+        assert "RESPOSTA_VR_MARCADOR_222" in off_sent_message
+        assert "USER: De volta ao VR" in off_sent_message
+
+        # 4. Segundo turno consecutivo na mesma família (OFF): não reinjeta delta
+        _send(False, "Segundo turno consecutivo OFF")
+        assert provider.sent[-1]["native_id"] == off_native_id
+        second_off_message = provider.sent[-1]["message"]
+        assert "CONTEXTO SINCRONIZADO ENTRE MODOS" not in second_off_message
+        assert "RESPOSTA_VR_MARCADOR_222" not in second_off_message
+        assert "RESPOSTA_OFF_MARCADOR_111" not in second_off_message
     finally:
         orchestrator.close()
+
+
+def test_mode_session_delta_context_empty():
+    delta, count = ChatOrchestrator._mode_session_delta_context([], "native")
+    assert delta == ""
+    assert count == 0
+
+
+def test_mode_session_delta_context_invalid_response_mode():
+    msgs = [
+        {"role": "user", "content": "ol\xc3\xa1"},
+        {"role": "assistant", "content": "oi", "response_mode": "native"},
+    ]
+    assert ChatOrchestrator._mode_session_delta_context(msgs, "invalid") == ("", 0)
+    assert ChatOrchestrator._mode_session_delta_context(msgs, "ultra") == ("", 0)
+    assert ChatOrchestrator._mode_session_delta_context(msgs, "") == ("", 0)
+
+
+def test_mode_session_delta_context_same_family():
+    msgs = [
+        {"role": "user", "content": "u1"},
+        {"role": "assistant", "content": "a1", "response_mode": "native"},
+        {"role": "user", "content": "u2"},
+    ]
+    assert ChatOrchestrator._mode_session_delta_context(msgs, "native") == ("", 0)
+
+
+def test_mode_session_delta_context_off_to_vr_to_off():
+    msgs = [
+        {"role": "user", "content": "pergunta off 1"},
+        {"role": "assistant", "content": "resposta off 1", "response_mode": "native"},
+        {"role": "user", "content": "pergunta vr 1"},
+        {"role": "assistant", "content": "resposta vr 1", "response_mode": "vr"},
+    ]
+    delta, count = ChatOrchestrator._mode_session_delta_context(msgs, "native")
+    assert count == 2
+    assert delta == "USER: pergunta vr 1\n\nASSISTANT: resposta vr 1"
+
+
+def test_mode_session_delta_context_vr_to_off_to_vr():
+    msgs = [
+        {"role": "user", "content": "pergunta vr 1"},
+        {"role": "assistant", "content": "resposta vr 1", "response_mode": "vr"},
+        {"role": "user", "content": "pergunta off 1"},
+        {"role": "assistant", "content": "resposta off 1", "response_mode": "native"},
+    ]
+    delta, count = ChatOrchestrator._mode_session_delta_context(msgs, "vr")
+    assert count == 2
+    assert delta == "USER: pergunta off 1\n\nASSISTANT: resposta off 1"
+
+
+def test_mode_session_delta_context_destination_without_previous_response():
+    msgs = [
+        {"role": "user", "content": "pergunta inicial em vr"},
+        {"role": "assistant", "content": "resposta inicial em vr", "response_mode": "vr"},
+    ]
+    delta, count = ChatOrchestrator._mode_session_delta_context(msgs, "native")
+    assert count == 2
+    assert delta == "USER: pergunta inicial em vr\n\nASSISTANT: resposta inicial em vr"
+
+
+def test_mode_session_delta_context_filters_commentary_error_interrupted():
+    msgs = [
+        {"role": "user", "content": "pergunta vr 1"},
+        {"role": "assistant", "content": "resposta vr 1", "response_mode": "vr"},
+        {"role": "assistant", "content": "pensando...", "message_phase": "commentary"},
+        {"role": "assistant", "content": "falhou", "message_status": "error"},
+        {"role": "assistant", "content": "interrompeu", "message_status": "interrupted"},
+        {"role": "assistant", "content": "cancelou", "message_status": "cancelled"},
+        {"role": "user", "content": "pergunta off 1"},
+        {"role": "assistant", "content": "resposta off 1", "response_mode": "native"},
+    ]
+    delta, count = ChatOrchestrator._mode_session_delta_context(msgs, "vr")
+    assert count == 2
+    assert delta == "USER: pergunta off 1\n\nASSISTANT: resposta off 1"
+
+
+def test_mode_session_delta_context_truncates_at_30():
+    msgs = []
+    msgs.append({"role": "user", "content": "antigo vr"})
+    msgs.append({"role": "assistant", "content": "antigo vr resp", "response_mode": "vr"})
+    for i in range(25):
+        msgs.append({"role": "user", "content": f"u{i}"})
+        msgs.append({"role": "assistant", "content": f"a{i}", "response_mode": "native"})
+    # 50 messages generated after last vr assistant
+    delta, count = ChatOrchestrator._mode_session_delta_context(msgs, "vr")
+    assert count == 30
+    assert "u24" in delta and "a24" in delta
+    assert "u0" not in delta
 
 
 def test_vr_normal_is_tool_driven_without_agents_or_automatic_retrieval(

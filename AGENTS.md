@@ -24,6 +24,15 @@ A lane Wiki explícita/source-wide usada por VR e Ultra consulta sempre `vrwiki`
 
 ## Tools VR, OFF e paginação
 
+### Sincronização de histórico entre sessões OFF e VR/Ultra
+
+- **Sessões nativas separadas pelo contrato de tools**: o modo OFF utiliza `native_id`, enquanto os modos VR e Ultra utilizam `native_id_vr`. Essa separação impede contaminação dos contratos de tools.
+- **Histórico canônico**: a interface exibe uma única conversa local e seu histórico persistido é canônico: VR native session ↔ conversa local canônica ↔ OFF native session.
+- **Sessão nova vs. sessão reutilizada**: uma sessão nativa nova recebe clone histórico de até 30 mensagens locais (`CONTEXTO TRANSFERIDO DE OUTRO PROVEDOR`). Uma sessão nativa reutilizada de uma família após turnos da família oposta recebe somente o delta ocorrido desde a última resposta da família de destino como histórico não confiável (`CONTEXTO SINCRONIZADO ENTRE MODOS`, com reason `mode_sync`).
+- **Sem resposta oposta, sem delta**: sem resposta da família oposta desde o última turno da família de destino, não há delta (`("", 0)`).
+- **Sem contaminação de tools ou retrieval**: a sincronização entre modos não habilita VR tools no OFF, não altera a separação dos contratos de tools, não executa retrieval e não substitui os IDs nativos das sessões.
+
+
 `vr_sources`, `vr_search` e `vr_read` pertencem somente aos modos VR e Ultra. O modo OFF não registra nem executa essas tools built-in por nenhum transporte e não utiliza `tools/vr-search.ps1`: as dynamic tools do Codex e o servidor MCP built-in `vr-mary-studio` (OpenCode, Claude e Antigravity) seguem o modo resolvido e, no OFF, o MCP permanece apenas para integrações não-VR como o VRMonitor, sem anunciar nem executar tools VR. Quando `vr_tools_enabled=False`, o MCP nem sequer instancia `MaryDatabase`, `KnowledgeRouter` ou `RetrievalService`. Uma requisição VR tool stale recebida em OFF é recusada imediatamente com erro sem executar retrieval.
 
 O OFF é um fluxo de modelo direto. As três raízes canônicas definem o escopo de conhecimento anunciado pelo OFF:

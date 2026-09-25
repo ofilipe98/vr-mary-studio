@@ -27,6 +27,15 @@ instalação, recursos QML, scripts e PyInstaller.
 
 ## Modos de resposta (OFF, VR e Ultra)
 
+### Sincronização entre sessões OFF e VR/Ultra
+
+- **Sessões nativas separadas pelo contrato de tools**: OFF e VR/Ultra mantêm sessões nativas separadas (`native_id` para OFF; `native_id_vr` para VR/Ultra), preservando a integridade das tools.
+- **Histórico canônico**: a interface exibe uma única conversa local e seu histórico é canônico: VR native session ↔ conversa local canônica ↔ OFF native session.
+- **Sessão nova vs. reutilizada**: uma nova sessão nativa recebe clone histórico (`CONTEXTO TRANSFERIDO DE OUTRO PROVEDOR`). Ao reutilizar a sessão de uma família após turnos da outra, o orquestrador sincroniza apenas o delta de mensagens ocorrido desde a última resposta da família de destino como histórico não confiável (`CONTEXTO SINCRONIZADO ENTRE MODOS`, evento `context_transferred` com reason `mode_sync`).
+- **Sem resposta oposta, sem delta**: sem resposta da família oposta após o último turno da família de destino, nenhum delta é injetado.
+- **Sem retrieval ou contaminação**: a sincronização não habilita VR tools no OFF, não executa retrieval e não altera os IDs nativos das sessões.
+
+
 O modo controla a estratégia de resposta; VR e Ultra compartilham as mesmas
 fontes e tools, e o OFF utiliza exclusivamente capacidades nativas de leitura
 sobre as raízes canônicas de documentação, schema e código.
