@@ -1366,66 +1366,6 @@ class ChatBridge(QObject):
     def extensionsLoading(self) -> bool:  # noqa: N802
         return self._extensions_loading
 
-    @Property(float, notify=stateChanged)
-    def contextUsageFraction(self) -> float:  # noqa: N802
-        row = self._selected_database_row()
-        window = self._provider_context_window()
-        if row is None or not window:
-            return 0.0
-        used = int(row["context_used_tokens"] or 0)
-        return min(1.0, used / window)
-
-    @Property(bool, notify=stateChanged)
-    def hasContextWindow(self) -> bool:  # noqa: N802
-        row = self._selected_database_row()
-        return bool(
-            row is not None
-            and int(row["context_used_tokens"] or 0) > 0
-            and self._provider_context_window() > 0
-        )
-
-    @Property(str, notify=stateChanged)
-    def contextUsageLabel(self) -> str:  # noqa: N802
-        row = self._selected_database_row()
-        window = self._provider_context_window()
-        if row is None or not window:
-            return "Aguardando dados"
-        used = int(row["context_used_tokens"] or 0)
-        return f"{used:,} / {window:,} tokens".replace(",", ".")
-
-    @Property(str, notify=stateChanged)
-    def contextUsageCompactLabel(self) -> str:  # noqa: N802
-        row = self._selected_database_row()
-        window = self._provider_context_window()
-        if row is None or not window:
-            return "Aguardando dados"
-        used = int(row["context_used_tokens"] or 0)
-        percentage = min(100, round(used * 100 / window))
-        return f"{percentage}% · {self._compact_tokens(used)}/{self._compact_tokens(window)}"
-
-    @Property(str, notify=stateChanged)
-    def contextUsageNote(self) -> str:  # noqa: N802
-        item = self._current_model_item()
-        model_name = str(item.get("displayName") or self._model or "modelo")
-        return f"Limite informado pelo provedor para {model_name}. Compactação ocorre quando necessário."
-
-    def _provider_context_window(self) -> int:
-        return self._ProviderSettings_domain._provider_context_window()
-
-    @Property(str, notify=stateChanged)
-    def totalProcessedLabel(self) -> str:  # noqa: N802
-        row = self._selected_database_row()
-        total = int(row["total_processed_tokens"] or 0) if row is not None else 0
-        return f"{total:,} tokens".replace(",", ".")
-
-    @staticmethod
-    def _compact_tokens(value: int) -> str:
-        if value >= 1_000_000:
-            return f"{value / 1_000_000:.1f}m".replace(".0m", "m")
-        if value >= 1_000:
-            return f"{value / 1_000:.0f}k"
-        return str(value)
-
     @Property("QVariantList", notify=stateChanged)
     def activitySteps(self) -> list[dict[str, str]]:  # noqa: N802
         return [dict(item) for item in self._activity_steps]

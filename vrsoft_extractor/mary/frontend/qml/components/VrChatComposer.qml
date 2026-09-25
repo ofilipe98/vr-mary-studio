@@ -648,18 +648,6 @@ Item {
                 }
 
                 Item { Layout.fillWidth: true }
-
-                VrContextButton {
-                    id: contextUsageButton
-                    objectName: "contextUsageButton"
-                    implicitWidth: Theme.scaledGeometry(28)
-                    implicitHeight: Theme.scaledGeometry(28)
-                    visible: composerCard.page.chatBridge.hasContextWindow
-                    fraction: composerCard.page.chatBridge.contextUsageFraction
-                    usageLabel: composerCard.page.chatBridge.contextUsageCompactLabel
-                    totalLabel: composerCard.page.chatBridge.totalProcessedLabel
-                    note: composerCard.page.chatBridge.contextUsageNote
-                }
             }
         }
     }

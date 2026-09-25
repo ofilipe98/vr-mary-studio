@@ -349,8 +349,6 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertTrue(reasoning_picker.property("visible"))
             chat_bridge.selectConversation(0)
             self.application.processEvents()
-            self.assertIsNotNone(window.findChild(QObject, "contextUsageButton"))
-            self.assertIsNotNone(window.findChild(QObject, "contextUsagePopup"))
             composer_input = window.findChild(QObject, "chatComposerInput")
             self.assertIsNotNone(composer_input)
             self.assertIsNotNone(window.findChild(QObject, "chatAttachButton"))
@@ -3969,7 +3967,6 @@ class QmlFrontendTest(unittest.TestCase):
             "VrModelPicker.qml",
             "VrReasoningPicker.qml",
             "VrPermissionPicker.qml",
-            "VrContextButton.qml",
         ):
             source = (components / component_name).read_text(encoding="utf-8")
             self.assertIn("Behavior on scale", source, component_name)
@@ -4478,61 +4475,21 @@ class QmlFrontendTest(unittest.TestCase):
             bridge.close()
 
 
-    def test_context_uses_provider_model_metadata_and_hides_without_it(self):
-        with TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            settings = self._settings(root)
-            database = MaryDatabase(
-                settings.database_path,
-                root=settings.root,
-                backup_portable_migration=False,
-            )
-            conversation_id = database.create_conversation(
-                "Contexto", "codex", "gpt-provider", settings.root
-            )
-            database.update_conversation(
-                conversation_id,
-                context_used_tokens=25_800,
-                context_window_tokens=200_000,
-            )
-            bridge = ChatBridge(
-                settings,
-                database,
-                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
-            )
-            bridge.selectConversationId(conversation_id)
-            bridge._model_items = [{
-                "key": "codex:gpt-provider",
-                "provider": "codex",
-                "value": "gpt-provider",
-                "displayName": "GPT Provider",
-                "contextWindow": 258_000,
-            }]
-
-            self.assertTrue(bridge.hasContextWindow)
-            self.assertEqual(bridge.contextUsageFraction, 0.1)
-            self.assertIn("258.000", bridge.contextUsageLabel)
-            database.update_conversation(conversation_id, context_used_tokens=0)
-            self.assertFalse(bridge.hasContextWindow)
-            database.update_conversation(conversation_id, context_used_tokens=25_800)
-            self.assertTrue(bridge.hasContextWindow)
-            bridge._model_items[0].pop("contextWindow")
-            self.assertFalse(bridge.hasContextWindow)
-
-            browser_event = RuntimeEvent(
-                conversation_id,
-                "tool_event",
-                payload={
-                    "item": {
-                        "type": "browser_navigation",
-                        "url": "https://example.com/preview",
-                    }
-                },
-            )
-            self.assertEqual(
-                bridge._browser_address_from_event(browser_event),
-                "https://example.com/preview",
-            )
+    def test_browser_address_from_event_prefers_preview_url(self):
+        browser_event = RuntimeEvent(
+            "conversation",
+            "tool_event",
+            payload={
+                "item": {
+                    "type": "browser_navigation",
+                    "url": "https://example.com/preview",
+                }
+            },
+        )
+        self.assertEqual(
+            ChatBridge._browser_address_from_event(browser_event),
+            "https://example.com/preview",
+        )
 
     def test_ultra_agent_pool_is_independent_from_the_orchestrator_selection(self):
         with TemporaryDirectory() as temporary:
@@ -6245,11 +6202,7 @@ class QmlFrontendTest(unittest.TestCase):
                 application_progress_bar = find_by_name(
                     window.contentItem(), "applicationImportProgressBar"
                 )
-                application_progress_label = find_by_name(
-                    window.contentItem(), "applicationImportProgressLabel"
-                )
                 self.assertIsNotNone(application_progress_bar)
-                self.assertIsNotNone(application_progress_label)
                 chat_bridge._application_import_preview = {"state": "running"}
                 chat_bridge._release_snapshot_running = True
                 chat_bridge._release_snapshot_progress = 42.5
@@ -6261,10 +6214,7 @@ class QmlFrontendTest(unittest.TestCase):
                     float(application_progress_bar.property("value")), 42.5, places=1
                 )
                 self.assertFalse(bool(application_progress_bar.property("indeterminate")))
-                self.assertEqual(
-                    application_progress_label.property("text"),
-                    "Copiando JARs — 5/10 · test.jar",
-                )
+                self.assertTrue(bool(application_progress_bar.property("showPercentage")))
                 chat_bridge._application_import_preview = {}
                 chat_bridge._release_snapshot_running = False
                 chat_bridge._release_snapshot_progress = 0.0

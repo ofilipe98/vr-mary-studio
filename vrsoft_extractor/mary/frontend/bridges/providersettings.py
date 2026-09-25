@@ -21,24 +21,6 @@ class ProviderSettingsDomain:
     def __setattr__(self, name, value):
         setattr(self._owner, name, value)
 
-    def _provider_context_window(self) -> int:
-        item = self._current_model_item()
-        candidates = (
-            item.get("contextWindow"),
-            item.get("context_window"),
-            item.get("contextWindowTokens"),
-            item.get("inputTokenLimit"),
-        )
-        for value in candidates:
-            try:
-                parsed = int(value or 0)
-            except (TypeError, ValueError):
-                continue
-            if parsed > 0:
-                return parsed
-        return 0
-
-
     def _enabled_provider_names(self) -> list[str]:
         enabled: list[str] = []
         for provider in ("codex", "claude", "opencode", "antigravity"):

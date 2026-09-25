@@ -16,7 +16,7 @@ os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PySide6.QtCore import QSettings, QUrl
+from PySide6.QtCore import QObject, QSettings, QUrl
 from PySide6.QtQml import QQmlComponent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
@@ -130,9 +130,12 @@ def main():
         db = MaryDatabase(
             settings.database_path, root=settings.root, backup_portable_migration=False
         )
-        frontend = FrontendBridge(settings, prefs, theme_override="dark_orange")
+        frontend = FrontendBridge(
+            settings, prefs, theme_override="dark_orange", initial_page="Configurações"
+        )
         chat = ChatBridge(settings, db, prefs)
         studio = StudioBridge(settings, db, prefs)
+        harness = None
         window = None
         try:
             with patch.object(chat, "refreshModels"):
@@ -147,22 +150,72 @@ def main():
             assert not component.isError(), [
                 error.toString() for error in component.errors()
             ]
-            window = component.create()
-            assert window is not None
-            window.show()
+            harness = component.create()
+            assert harness is not None
+            harness.show()
 
             for theme in ("dark_orange", "light"):
                 frontend.setTheme(theme)
                 for width in (640, 390):
-                    window.setWidth(width)
+                    harness.setWidth(width)
                     QTest.qWait(200)
                     name = f"progress-{theme}-{width}.png"
-                    assert window.grabWindow().save(str(output / name)), name
-                frontend.setReduceMotion(True)
-                QTest.qWait(120)
-                name = f"progress-{theme}-{width}-reduce-motion.png"
-                assert window.grabWindow().save(str(output / name)), name
-                frontend.setReduceMotion(False)
+                    assert harness.grabWindow().save(str(output / name)), name
+                    frontend.setReduceMotion(True)
+                    QTest.qWait(120)
+                    name = f"progress-{theme}-{width}-reduce-motion.png"
+                    assert harness.grabWindow().save(str(output / name)), name
+                    frontend.setReduceMotion(False)
+            harness.close()
+            harness = None
+
+            # Real settings cards while their operations are running.
+            window = engine.rootObjects()[0]
+            window.setWidth(1280)
+            window.setHeight(900)
+            window.show()
+
+            class _IdleThread:
+                def is_alive(self):
+                    return False
+
+                def join(self, timeout=None):
+                    return None
+
+            chat._apps_catalog_thread = _IdleThread()
+            chat._apps_catalog_phase = "indexing_coverage"
+            chat._apps_catalog_progress_current = 4
+            chat._apps_catalog_progress_total = 10
+            chat._decompiled_export_running = True
+            chat._decompiled_export_progress = 42.5
+            chat._decompiled_export_processed = 425
+            chat._decompiled_export_total = 1000
+            chat._decompiled_import_running = True
+            chat._decompiled_import_progress = 42.5
+            chat._decompiled_import_processed = 425
+            chat._decompiled_import_total = 1000
+            chat._knowledge_transfer_running = True
+            chat._knowledge_transfer_operation = "export_knowledge"
+            chat._knowledge_transfer_progress = 42.5
+            chat._knowledge_transfer_processed = 425
+            chat._knowledge_transfer_total = 1000
+            chat._release_snapshot_status = "Exportando conhecimento — 425/1.000 itens"
+            chat._application_import_preview = {"state": "running"}
+            chat._release_snapshot_running = True
+            chat._release_snapshot_progress = 42.5
+            chat.stateChanged.emit()
+            settings_page = window.findChild(QObject, "settingsPage")
+            assert settings_page is not None
+            for theme in ("dark_orange", "light"):
+                frontend.setTheme(theme)
+                for tab, name in (
+                    (8, "knowledge-progress"),
+                    (3, "applications-progress"),
+                ):
+                    settings_page.setProperty("tabIndex", tab)
+                    QTest.qWait(250)
+                    filename = f"{name}-{theme}.png"
+                    assert window.grabWindow().save(str(output / filename)), filename
 
             warnings = [warning.toString() for warning in engine._qml_warnings]
             (output / "qml-warnings.txt").write_text(
@@ -170,6 +223,8 @@ def main():
             )
             assert not warnings, warnings
         finally:
+            if harness is not None:
+                harness.close()
             if window is not None:
                 window.close()
             chat.close()

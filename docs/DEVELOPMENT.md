@@ -300,6 +300,14 @@ tema, posição de leitura e os chips de arquivo.
 O script `visual_chat_review.py` também captura tabelas, chips de arquivo e
 prompts longos nos temas claro/escuro, janela estreita e escala de 150%.
 
+Todas as barras de progresso usam `VrProgressBar.qml`: posição real (nunca um
+percentual inventado), legenda opcional `showPercentage`, marcador de ritmo
+(`markerPosition`), limiares `warningThreshold`/`dangerThreshold` e um feixe
+indeterminado único, com fallback estático sob `reduceMotion`. O percentual do
+import de aplicativos vem de `releaseSnapshotProgress`; a inicialização usa uma
+barra de duas etapas reais do catálogo. `scripts/visual_progress_review.py`
+renderiza a matriz de estados em `.test-tmp/progress-review`.
+
 A cobertura das releases é consultada por um worker em `bridges/codeadmin.py`.
 O worker devolve dados pelo sinal Qt; somente a thread da interface altera o
 cache e as preferências. Ao invalidar resultados após processamento ou snapshots,
@@ -333,6 +341,7 @@ sozinho, sem relatórios de execuções anteriores:
 .\.venv\Scripts\python.exe -m pytest tests/test_v2_l5_hybrid.py -q
 .\.venv\Scripts\python.exe scripts/visual_chat_review.py .test-tmp/visual-review
 .\.venv\Scripts\python.exe scripts/visual_settings_all_tabs_review.py .test-tmp/settings-review
+.\.venv\Scripts\python.exe scripts/visual_progress_review.py .test-tmp/progress-review
 .\.venv\Scripts\python.exe scripts/curate_knowledge_modules.py --help
 ```
 

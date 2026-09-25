@@ -582,25 +582,14 @@ Item {
                         }
                     }
 
-                    // Running state progress indicator
+                    // Running state progress indicator; the card header already
+                    // carries the release status text, so the bar only adds the
+                    // real percentage.
                     ColumnLayout {
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
                         visible: chat.applicationImportPreview.state === "running"
                         spacing: Theme.spaceXs
-
-                        Text {
-                            objectName: "applicationImportProgressLabel"
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            text: chat.releaseSnapshotStatus
-                            visible: text.length > 0
-                            color: Theme.palette.mutedText
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSizeCaption
-                            elide: Text.ElideRight
-                            renderType: Theme.textRenderType
-                        }
 
                         VrProgressBar {
                             objectName: "applicationImportProgressBar"

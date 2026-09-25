@@ -138,7 +138,8 @@ ProgressBar {
                     visible: !root.indeterminate && root.animatedPosition > 0
                     height: root.barHeight
                     width: root.animatedPosition > 0
-                        ? Math.max(root.barHeight, Math.min(barClip.width, root.animatedPosition * barClip.width))
+                        ? Math.max(Math.min(root.barHeight, barClip.width),
+                                   Math.min(barClip.width, root.animatedPosition * barClip.width))
                         : 0
                     radius: Math.min(root.barHeight / 2, width / 2)
 
