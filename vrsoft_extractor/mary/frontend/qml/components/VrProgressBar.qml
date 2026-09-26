@@ -16,6 +16,9 @@ ProgressBar {
     property real warningThreshold: -1
     property real dangerThreshold: -1
     property string accessibleName: "Progresso"
+    // Optional discrete segmented pills (T3 Code TaskSegments parity)
+    property int segments: 0
+    property int activeSegment: -1
 
     readonly property bool reducedMotion: typeof frontend !== "undefined"
         && frontend !== null && frontend.reduceMotion
@@ -80,18 +83,44 @@ ProgressBar {
             anchors.bottom: parent.bottom
             height: root.barHeight
 
+            // Discrete segmented layout when segments is configured (2 to 10 steps)
+            Row {
+                id: segmentRow
+                anchors.fill: parent
+                spacing: 2
+                visible: root.segments > 1 && root.segments <= 10
+                Repeater {
+                    model: root.segments
+                    Rectangle {
+                        width: Math.max(2, (segmentRow.width - (root.segments - 1) * segmentRow.spacing) / root.segments)
+                        height: root.barHeight
+                        radius: root.barHeight / 2
+                        color: {
+                            var comp = Math.round(root.value)
+                            if (index < comp)
+                                return root.effectiveAccentColor
+                            if (index === comp && root.activeSegment >= 0)
+                                return (Theme.palette.brandOrange || "#ff7200")
+                            return root.trackColor
+                        }
+                    }
+                }
+            }
+
             Rectangle {
                 id: track
                 objectName: "progressTrack"
                 anchors.fill: parent
                 radius: root.barHeight / 2
                 color: root.trackColor
+                visible: !(root.segments > 1 && root.segments <= 10)
             }
 
             Item {
                 id: barClip
                 anchors.fill: parent
                 clip: true
+                visible: !(root.segments > 1 && root.segments <= 10)
 
                 // Indeterminate beam: one soft sweep instead of competing rails.
                 Rectangle {
@@ -154,7 +183,7 @@ ProgressBar {
             Rectangle {
                 id: marker
                 objectName: "progressMarker"
-                visible: root.markerPosition >= 0
+                visible: root.markerPosition >= 0 && !(root.segments > 1 && root.segments <= 10)
                 x: Math.max(0, Math.min(barClip.width - width, barClip.width * Math.max(0, Math.min(1, root.markerPosition))))
                 anchors.verticalCenter: parent.verticalCenter
                 width: 2
@@ -165,21 +194,23 @@ ProgressBar {
             }
         }
 
-        Text {
+        Item {
             id: percentageLabel
-            objectName: "progressPercentage"
             visible: root.showPercentage
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            text: root.percentageText
-            horizontalAlignment: Text.AlignRight
-            color: Theme.palette.mutedText
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSizeMicro
-            font.weight: Theme.weightMedium
-            renderType: Theme.textRenderType
-            elide: Text.ElideRight
+            height: visible ? Theme.scaledGeometry(16) : 0
+
+            Text {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.percentageText
+                color: Theme.palette.text
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSizeCaption
+                renderType: Theme.textRenderType
+            }
         }
     }
 }

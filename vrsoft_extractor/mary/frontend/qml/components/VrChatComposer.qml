@@ -107,10 +107,11 @@ Item {
     // `rounded-b-2xl` for the inset bottom band.
     readonly property real compactInset: Theme.scaledGeometry(22)
     readonly property int compactStripRadius: Theme.radiusLg
-    // Retraído, o campo reserva a largura real de VR + anexo + enviar para o
-    // texto nunca correr sob os controles, em qualquer escala da interface.
-    readonly property real compactActionsReserve: Math.max(Theme.scaledGeometry(86),
-        composerSurface.width - vrModeButton.x + Theme.spaceSm)
+    // Retraído, o campo reserva a largura de anexo + enviar para o texto
+    // nunca correr sob as ações primárias compactas.
+    readonly property real compactActionsReserve: composerCard.isCompact
+        ? Theme.scaledGeometry(82)
+        : Math.max(Theme.scaledGeometry(86), composerSurface.width - vrModeButton.x + Theme.spaceSm)
 
     objectName: "chatComposerCard"
     z: 20
@@ -183,38 +184,65 @@ Item {
             var inset = top
             var sr = Math.max(0, Math.min(stripRadius, h - strip, (w - inset * 2) / 2))
 
+            // Fator de aproximação bezier cúbica para cantos arredondados (T3 Code shape parity)
+            var kTop = top * 0.4477
+            var kInset = inset * 0.4477
+            var kSr = sr * 0.4477
+
             ctx.beginPath()
             ctx.moveTo(0, top)
             // Canto superior esquerdo
-            ctx.arc(top, top, top, Math.PI, Math.PI * 1.5)
+            ctx.bezierCurveTo(0, kTop, kTop, 0, top, 0)
             // Borda superior
             ctx.lineTo(w - top, 0)
             // Canto superior direito
-            ctx.arc(w - top, top, top, Math.PI * 1.5, Math.PI * 2)
+            ctx.bezierCurveTo(w - kTop, 0, w, kTop, w, top)
             // Borda lateral direita do card superior
-            ctx.lineTo(w, strip - top)
-            // Canto inferior direito do card superior (convexa até o inset)
-            ctx.arc(w - inset, strip - top, top, 0, Math.PI * 0.5)
+            ctx.lineTo(w, strip - inset)
+            // Transição suave para o recuo da bandeja de controles (bezier cúbica T3 Code)
+            ctx.bezierCurveTo(w, strip - kInset, w - kInset, strip, w - inset, strip)
             // Borda lateral direita da bandeja de controles
             ctx.lineTo(w - inset, h - sr)
             // Canto inferior direito da bandeja
             if (sr > 0)
-                ctx.arc(w - inset - sr, h - sr, sr, 0, Math.PI * 0.5)
+                ctx.bezierCurveTo(w - inset, h - kSr, w - inset - kSr, h, w - inset - sr, h)
             // Borda inferior da bandeja
             ctx.lineTo(inset + sr, h)
             // Canto inferior esquerdo da bandeja
             if (sr > 0)
-                ctx.arc(inset + sr, h - sr, sr, Math.PI * 0.5, Math.PI)
+                ctx.bezierCurveTo(inset + kSr, h, inset, h - kSr, inset, h - sr)
             // Borda lateral esquerda da bandeja de controles
             ctx.lineTo(inset, strip)
-            // Canto inferior esquerdo do card superior (convexa saindo do inset até x = 0)
-            ctx.arc(inset, strip - top, top, Math.PI * 0.5, Math.PI)
+            // Transição suave saindo da bandeja para o card superior (bezier cúbica T3 Code)
+            ctx.bezierCurveTo(inset * 0.4477, strip, 0, strip - kInset, 0, strip - inset)
             // Borda lateral esquerda do card superior
             ctx.lineTo(0, top)
             ctx.closePath()
 
             ctx.fillStyle = fillColor
             ctx.fill()
+
+            // Linha sutil da costura entre o card superior e a bandeja
+            ctx.beginPath()
+            ctx.moveTo(inset, strip)
+            ctx.lineTo(w - inset, strip)
+            ctx.strokeStyle = Theme.palette.appearance === "light"
+                ? Qt.alpha(Theme.palette.border, 0.4)
+                : Qt.rgba(255, 255, 255, 0.05)
+            ctx.lineWidth = 1
+            ctx.stroke()
+
+            // Destaque superior interno sutil no tema escuro (rim-light)
+            if (Theme.palette.appearance !== "light") {
+                ctx.beginPath()
+                ctx.moveTo(top, 1)
+                ctx.lineTo(w - top, 1)
+                ctx.strokeStyle = Qt.rgba(255, 255, 255, 0.04)
+                ctx.lineWidth = 1
+                ctx.stroke()
+            }
+
+            // Contorno externo contínuo
             ctx.strokeStyle = outlineColor
             ctx.lineWidth = 1
             ctx.stroke()
@@ -559,9 +587,8 @@ Item {
             id: attachButton
             objectName: "chatAttachButton"
             anchors.right: sendButton.left
-            anchors.rightMargin: Theme.scaledGeometry(8)
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: composerCard.isCompact ? Theme.spaceSm : Theme.spaceLg
+            anchors.rightMargin: Theme.scaledGeometry(6)
+            anchors.verticalCenter: sendButton.verticalCenter
             width: Theme.scaledGeometry(32)
             height: Theme.scaledGeometry(32)
             implicitWidth: Theme.scaledGeometry(32)
@@ -578,9 +605,11 @@ Item {
             id: sendButton
             objectName: "chatSendButton"
             anchors.right: parent.right
-            anchors.rightMargin: Theme.scaledGeometry(composerCard.isCompact ? 12 : 16)
+            anchors.rightMargin: Theme.scaledGeometry(composerCard.isCompact ? 10 : 16)
             anchors.bottom: parent.bottom
-            anchors.bottomMargin: composerCard.isCompact ? Theme.spaceSm : Theme.spaceLg
+            anchors.bottomMargin: composerCard.isCompact
+                ? Math.round((composerCard.compactSurfaceHeight - height) / 2)
+                : Theme.spaceLg
             width: Theme.scaledGeometry(32)
             height: Theme.scaledGeometry(32)
             implicitWidth: Theme.scaledGeometry(32)
@@ -614,6 +643,7 @@ Item {
         Button {
             id: vrModeButton
             objectName: "vrModeButton"
+            visible: !composerCard.isCompact
             property string variant: composerCard.page.chatBridge.vrMode !== "off" ? "primary" : "ghost"
             implicitWidth: vrModeContent.implicitWidth + 14
             implicitHeight: Theme.scaledGeometry(28)

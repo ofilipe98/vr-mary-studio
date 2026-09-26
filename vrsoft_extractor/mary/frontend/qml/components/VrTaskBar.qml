@@ -14,7 +14,9 @@ Rectangle {
     property real maximumListHeight: 384
     signal toggleRequested()
 
-    implicitHeight: content.implicitHeight + 10
+    implicitHeight: root.expanded
+        ? Math.max(Theme.scaledGeometry(160), Math.min(root.maximumListHeight, content.implicitHeight + Theme.scaledGeometry(12)))
+        : Theme.scaledGeometry(36)
     color: "transparent"
     clip: true
 
@@ -34,28 +36,28 @@ Rectangle {
         id: content
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.verticalCenter: parent.verticalCenter
-        anchors.leftMargin: Theme.scaledGeometry(4)
-        anchors.rightMargin: Theme.scaledGeometry(4)
+        anchors.top: parent.top
+        anchors.leftMargin: Theme.scaledGeometry(8)
+        anchors.rightMargin: Theme.scaledGeometry(8)
         spacing: 0
 
         Item {
             id: taskHeader
             objectName: "taskPlanHeader"
             Layout.fillWidth: true
-            Layout.preferredHeight: Theme.scaledGeometry(24)
+            Layout.preferredHeight: Theme.scaledGeometry(36)
 
             RowLayout {
                 anchors.fill: parent
-                spacing: Theme.scaledGeometry(4)
+                spacing: Theme.scaledGeometry(6)
 
                 Item {
-                    Layout.preferredWidth: Theme.scaledGeometry(24)
-                    Layout.preferredHeight: Theme.scaledGeometry(24)
+                    Layout.preferredWidth: Theme.scaledGeometry(20)
+                    Layout.preferredHeight: Theme.scaledGeometry(20)
                     VrLineIcon {
                         anchors.centerIn: parent
-                        width: Theme.iconMicro
-                        height: Theme.iconMicro
+                        width: Theme.scaledGeometry(14)
+                        height: Theme.scaledGeometry(14)
                         kind: "listTodo"
                         foreground: Theme.palette.mutedText
                     }
@@ -70,7 +72,7 @@ Rectangle {
                 Text {
                     Layout.fillWidth: true
                     text: root.effectiveCurrentStep()
-                    color: Theme.palette.text
+                    color: Theme.palette.headingText || "#E6E6E6"
                     font.family: Theme.fontFamily
                     font.pixelSize: Theme.fontSize(12)
                     font.weight: Font.Medium
@@ -82,10 +84,7 @@ Rectangle {
                         var total = root.effectiveTotal();
                         if (total <= 0)
                             return "";
-                        var label = root.effectiveCompleted() + "/" + total;
-                        if (root.width >= 400)
-                            label += " concluídas · " + Math.round(100 * root.effectiveCompleted() / total) + "%";
-                        return label;
+                        return root.effectiveCompleted() + "/" + total;
                     }
                     color: root.effectiveCompleted() === root.effectiveTotal() ? Theme.palette.success : Theme.palette.mutedText
                     font.family: Theme.fontFamily
@@ -94,20 +93,22 @@ Rectangle {
                 }
                 VrProgressBar {
                     objectName: "taskPlanProgress"
-                    visible: root.effectiveTotal() > 0 && root.width >= 600
+                    visible: root.effectiveTotal() > 0 && root.width >= 480
                     Layout.preferredWidth: Theme.scaledGeometry(80)
-                    Layout.preferredHeight: Theme.scaledGeometry(4)
-                    barHeight: Theme.scaledGeometry(4)
+                    Layout.preferredHeight: Theme.scaledGeometry(3)
+                    barHeight: Theme.scaledGeometry(3)
                     from: 0
                     to: root.effectiveTotal()
                     value: root.effectiveCompleted()
+                    segments: root.effectiveTotal() <= 10 ? root.effectiveTotal() : 0
+                    activeSegment: root.running ? root.effectiveCompleted() : -1
                     accentColor: root.effectiveCompleted() >= root.effectiveTotal()
                         ? Theme.palette.success : Theme.palette.brandOrange
                     Accessible.name: "Progresso das tarefas"
                 }
                 VrLineIcon {
-                    Layout.preferredWidth: Theme.scaledGeometry(24)
-                    Layout.preferredHeight: Theme.iconCompact
+                    Layout.preferredWidth: Theme.scaledGeometry(18)
+                    Layout.preferredHeight: Theme.scaledGeometry(18)
                     kind: root.expanded ? "chevronDown" : "chevronUp"
                     foreground: Theme.palette.mutedText
                 }
@@ -141,114 +142,95 @@ Rectangle {
 
                 Repeater {
                     model: root.steps
-                    delegate: RowLayout {
+                    delegate: Rectangle {
+                        required property int index
                         required property var modelData
                         Layout.fillWidth: true
-                        Layout.minimumHeight: Theme.scaledGeometry(20)
-                        spacing: Theme.scaledGeometry(4)
+                        Layout.preferredHeight: Theme.scaledGeometry(26)
+                        color: taskHover.hovered ? Theme.palette.hoverBackground : "transparent"
+                        radius: Theme.scaledGeometry(4)
 
-                        Item {
-                            Layout.preferredWidth: Theme.scaledGeometry(24)
-                            Layout.preferredHeight: Theme.scaledGeometry(20)
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: Theme.scaledGeometry(8)
+                            anchors.rightMargin: Theme.scaledGeometry(8)
+                            spacing: Theme.scaledGeometry(6)
+
                             VrLineIcon {
-                                visible: modelData.state === "completed"
-                                anchors.centerIn: parent
-                                width: Theme.iconMicro
-                                height: Theme.iconMicro
-                                kind: "check"
-                                foreground: Theme.palette.success
+                                Layout.preferredWidth: Theme.iconMicro
+                                Layout.preferredHeight: Theme.iconMicro
+                                kind: {
+                                    var state = modelData.state || modelData.status || ""
+                                    if (state === "completed" || state === "done") return "check"
+                                    if (state === "running" || state === "in_progress") return "loader"
+                                    if (state === "failed" || state === "error") return "alertTriangle"
+                                    return "circle"
+                                }
+                                foreground: {
+                                    var state = modelData.state || modelData.status || ""
+                                    if (state === "completed" || state === "done") return Theme.palette.success
+                                    if (state === "running" || state === "in_progress") return Theme.palette.brandOrange
+                                    if (state === "failed" || state === "error") return Theme.palette.danger
+                                    return Theme.palette.mutedText
+                                }
                             }
-                            Rectangle {
-                                visible: modelData.state !== "completed"
-                                anchors.centerIn: parent
-                                width: Theme.scaledGeometry(6)
-                                height: Theme.scaledGeometry(6)
-                                radius: Theme.scaledGeometry(3)
-                                color: modelData.state === "running" ? Theme.palette.brandOrange : "transparent"
-                                border.width: modelData.state === "pending" ? 1 : 0
-                                border.color: Theme.palette.mutedText
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: modelData.text || modelData.step || modelData.title || ""
+                                color: Theme.palette.text
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSize(12)
+                                elide: Text.ElideRight
+                                maximumLineCount: 1
                             }
                         }
-                        Text {
-                            Layout.fillWidth: true
-                            text: modelData.text || ""
-                            color: modelData.state === "running"
-                                ? Theme.palette.text : Theme.palette.mutedText
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(12)
-                            opacity: modelData.state === "completed" ? 0.65 : 1
-                            wrapMode: Text.WordWrap
-                        }
-                        Text {
-                            text: modelData.state === "completed" ? "Concluída"
-                                : modelData.state === "running" ? "Executando" : "Pendente"
-                            color: Theme.palette.mutedText
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSizeMicro
-                        }
-                        Text {
-                            Layout.preferredWidth: Theme.scaledGeometry(40)
-                            Layout.rightMargin: Theme.scaledGeometry(4)
-                            horizontalAlignment: Text.AlignRight
-                            text: modelData.durationMs !== undefined
-                                ? root.durationText(modelData.durationMs)
-                                : modelData.state === "running" ? "agora" : ""
-                            color: Theme.palette.mutedText
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSizeMicro
-                        }
+
+                        HoverHandler { id: taskHover }
                     }
                 }
             }
         }
     }
 
-    function completedCount() {
-        var completed = 0
-        for (var index = 0; index < root.steps.length; ++index)
-            if (String(root.steps[index].state || "") === "completed") completed += 1
-        return completed
-    }
-
-    function currentStepText() {
-        for (var index = 0; index < root.steps.length; ++index)
-            if (String(root.steps[index].state || "") === "running")
-                return String(root.steps[index].text || "")
-        for (var pendingIndex = 0; pendingIndex < root.steps.length; ++pendingIndex)
-            if (String(root.steps[pendingIndex].state || "") === "pending")
-                return String(root.steps[pendingIndex].text || "")
-        return root.steps.length && root.completedCount() === root.steps.length
-            ? "Tarefas concluídas" : ""
-    }
-
-    function hasBackendProgress() {
-        return root.progress !== undefined && root.progress !== null
-            && Number(root.progress.total || 0) > 0
+    function effectiveTotal() {
+        if (progress && typeof progress.total === "number" && progress.total > 0)
+            return progress.total
+        if (steps && steps.length > 0)
+            return steps.length
+        return 0
     }
 
     function effectiveCompleted() {
-        if (root.hasBackendProgress())
-            return Number(root.progress.completed || 0)
-        return root.completedCount()
-    }
-
-    function effectiveTotal() {
-        if (root.hasBackendProgress())
-            return Number(root.progress.total || 0)
-        return root.steps.length
+        if (progress && typeof progress.completed === "number")
+            return progress.completed
+        if (steps && steps.length > 0) {
+            var c = 0
+            for (var i = 0; i < steps.length; ++i) {
+                var s = steps[i].state || steps[i].status || ""
+                if (s === "completed" || s === "done")
+                    c++
+            }
+            return c
+        }
+        return 0
     }
 
     function effectiveCurrentStep() {
-        if (root.hasBackendProgress()) {
-            var backendStep = String(root.progress.step || "")
-            if (backendStep.length > 0)
-                return backendStep
+        if (steps && steps.length > 0) {
+            for (var i = 0; i < steps.length; ++i) {
+                var s = steps[i].state || steps[i].status || ""
+                if (s === "running" || s === "in_progress")
+                    return steps[i].text || steps[i].step || steps[i].title || ""
+            }
+            for (var j = 0; j < steps.length; ++j) {
+                var st = steps[j].state || steps[j].status || ""
+                if (st !== "completed" && st !== "done")
+                    return steps[j].text || steps[j].step || steps[j].title || ""
+            }
         }
-        return root.currentStepText()
-    }
-
-    function durationText(milliseconds) {
-        var seconds = Math.floor(milliseconds / 1000)
-        return seconds >= 60 ? Math.floor(seconds / 60) + "m " + (seconds % 60) + "s" : seconds + "s"
+        if (progress && progress.currentStep)
+            return progress.currentStep
+        return ""
     }
 }
