@@ -46,9 +46,6 @@ class MarySettings:
     # Discreet hint suggesting the VR flow when a native-mode message clearly
     # targets the local ERP domain (max once per conversation).
     vr_mode_hint_enabled: bool = True
-    # Opt-in: expose the vr_search tool to native turns so the provider can
-    # pull local evidence on demand. Applies to threads created after enabling.
-    native_vr_search_enabled: bool = True
 
     @property
     def state_dir(self) -> Path:
@@ -105,10 +102,6 @@ class MarySettings:
         return self.root / "logs"
 
     @property
-    def tesseract_dir(self) -> Path:
-        return self.root / "tools" / "tesseract"
-
-    @property
     def movidesk_state_path(self) -> Path:
         return self.state_dir / "movidesk.json"
 
@@ -136,7 +129,6 @@ class MarySettings:
             self.work_dir,
             self.videos_dir,
             self.logs_dir,
-            self.tesseract_dir,
         ]
         for module in ("Fiscal", "ADM_FIN_ESTOQUE", "PDV"):
             directories.extend(
@@ -222,9 +214,6 @@ def load_vr_settings(
         ).strip().casefold() not in {"", "0", "false", "no", "off"},
         vr_mode_hint_enabled=str(
             os.environ.get("VR_MODE_HINT_ENABLED", "1")
-        ).strip().casefold() not in {"", "0", "false", "no", "off"},
-        native_vr_search_enabled=str(
-            os.environ.get("VR_NATIVE_SEARCH_ENABLED", "1")
         ).strip().casefold() not in {"", "0", "false", "no", "off"},
         sync_interval_minutes=max(15, interval),
         default_effort=effort,

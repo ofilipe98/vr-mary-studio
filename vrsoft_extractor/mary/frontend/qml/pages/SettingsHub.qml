@@ -19,6 +19,11 @@ Item {
         : 0
     readonly property bool settingsSearching: settingsActive
         && settingsSearch.trim().length > 0
+    // Sidebar fills animate alpha only: animating from "transparent" would
+    // interpolate toward black RGB and flash a dark box during the fade.
+    readonly property color navHoverFill: Theme.palette.navHover
+    readonly property color navRestFill: Qt.rgba(
+        navHoverFill.r, navHoverFill.g, navHoverFill.b, 0)
     readonly property var settingsSearchItems: [
         { title: "Fonte de conhecimento VR", category: "Geral", tab: 0, icon: "folder" },
         { title: "Credenciais Movidesk", category: "Geral", tab: 0, icon: "settings" },
@@ -28,7 +33,7 @@ Item {
         { title: "Provedores e modelos", category: "Provedores", tab: 1, icon: "models" },
         { title: "Agentes VR Ultra", category: "VR Ultra", tab: 2, icon: "agents" },
         { title: "Modelos dos pesquisadores", category: "VR Ultra", tab: 2, icon: "models" },
-        { title: "Perfil especialista sênior", category: "VR Ultra", tab: 2, icon: "settings" },
+        { title: "Perfis especialistas", category: "VR Ultra", tab: 2, icon: "settings" },
         { title: "Contexto de código no VR Ultra", category: "VR Ultra", tab: 2, icon: "files" },
         { title: "Catálogo de aplicativos e versões", category: "Aplicativos e versões", tab: 3, icon: "package" },
         { title: "Importação de pacotes e JARs", category: "Aplicativos e versões", tab: 3, icon: "folder" },
@@ -46,7 +51,10 @@ Item {
         { title: "Suavização de fontes e quebra de linha (Word wrap)", category: "Aparência", tab: 4, icon: "edit" },
         { title: "Browser e acesso do agente", category: "Browser", tab: 5, icon: "browser" },
         { title: "Projetos arquivados", category: "Projetos arquivados", tab: 6, icon: "archive" },
-        { title: "Skills e ferramentas", category: "Skills", tab: 7, icon: "settings" }
+        { title: "Skills e ferramentas", category: "Skills", tab: 7, icon: "settings" },
+        { title: "Importação e exportação de Wiki, Endoo e KB", category: "Wiki e KB", tab: 8, icon: "package" },
+        { title: "Pacotes de conhecimento (.zip)", category: "Wiki e KB", tab: 8, icon: "folder" },
+        { title: "Exportar anexos e documentos da base", category: "Wiki e KB", tab: 8, icon: "files" }
     ]
     readonly property var filteredSettings: settingsSearchItems.filter(function(item) {
         var query = root.settingsSearch.trim().toLocaleLowerCase()
@@ -68,12 +76,12 @@ Item {
     }
 
     readonly property var sections: [
-        { title: "Dashboard", page: 0, icon: "nav-dashboard.svg" },
-        { title: "Conhecimento", page: 2, icon: "nav-knowledge.svg" },
-        { title: "Sincronizações", page: 3, icon: "nav-sync.svg" },
-        { title: "Revisão", page: 4, icon: "nav-review.svg" },
-        { title: "Vídeos", page: 5, icon: "nav-videos.svg" },
-        { title: "Logs", page: 6, icon: "nav-logs.svg" }
+        { title: "Dashboard", page: 0, iconKind: "layoutGrid" },
+        { title: "Conhecimento", page: 2, iconKind: "book" },
+        { title: "Sincronizações", page: 3, iconKind: "refreshCw" },
+        { title: "Revisão", page: 4, iconKind: "clipboardCheck" },
+        { title: "Vídeos", page: 5, iconKind: "video" },
+        { title: "Logs", page: 6, iconKind: "fileText" }
     ]
 
     // Visited pages stay alive: recreating heavy pages (Vídeos, Conhecimento)
@@ -232,38 +240,39 @@ Item {
             id: settingsNavigation
             objectName: "settingsNavigation"
             visible: !root.compactSettings
-            SplitView.minimumWidth: Theme.scaledGeometry(220)
-            SplitView.preferredWidth: Theme.scaledGeometry(260)
+            SplitView.minimumWidth: Theme.navigationWidthMinimum
+            SplitView.preferredWidth: Theme.navigationWidth
             SplitView.maximumWidth: Theme.scaledGeometry(430)
             color: Theme.palette.navigationBackground
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: Theme.scaledGeometry(12)
+                anchors.margins: Theme.sidebarContentInset
                 spacing: Theme.scaledGeometry(4)
 
                 Item {
                     id: searchBarContainer
                     Layout.fillWidth: true
-                    Layout.preferredHeight: Theme.scaledGeometry(34)
+                    Layout.preferredHeight: Theme.sidebarRowHeight
 
                     VrTextField {
                         id: settingsConversationSearch
                         objectName: "settingsConversationSearch"
                         anchors.fill: parent
-                        leftPadding: Theme.scaledGeometry(35)
+                        leftPadding: Theme.scaledGeometry(32)
                         rightPadding: Theme.scaledGeometry(32)
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(13)
+                        font.pixelSize: Theme.fontSizeControl
                         placeholderText: root.settingsActive
                             ? "Pesquisar configurações" : "Pesquisar conversas"
                         placeholderTextColor: Theme.palette.navMuted
                         color: Theme.palette.navText
                         background: Rectangle {
-                            radius: Theme.scaledGeometry(6)
+                            radius: Theme.radiusControl
                             color: settingsConversationSearch.activeFocus
                                 ? Theme.palette.chatControl
-                                : (settingsConversationSearch.hovered ? Theme.palette.navHover : "transparent")
+                                : (settingsConversationSearch.hovered
+                                    ? root.navHoverFill : root.navRestFill)
                             border.width: settingsConversationSearch.activeFocus ? 1 : 0
                             border.color: settingsConversationSearch.activeFocus
                                 ? Theme.palette.focus : "transparent"
@@ -301,7 +310,7 @@ Item {
 
                     VrLineIcon {
                         anchors.left: parent.left
-                        anchors.leftMargin: Theme.iconMicro
+                        anchors.leftMargin: Theme.sidebarContentInset
                         anchors.verticalCenter: parent.verticalCenter
                         width: Theme.iconSmall
                         height: Theme.iconSmall
@@ -327,7 +336,7 @@ Item {
                             text: "/"
                             color: Theme.palette.navMuted
                             font.family: Theme.fontFamily
-                            font.pixelSize: 11
+                            font.pixelSize: Theme.fontSizeMicro
                             font.weight: Font.Medium
                             renderType: Theme.textRenderType
                         }
@@ -344,10 +353,10 @@ Item {
                         anchors.rightMargin: Theme.scaledGeometry(4)
                         anchors.verticalCenter: parent.verticalCenter
                         visible: settingsConversationSearch.text.length > 0
-                        width: Theme.scaledGeometry(26)
-                        height: Theme.scaledGeometry(26)
+                        width: Theme.iconButtonCompact
+                        height: Theme.iconButtonCompact
                         iconKind: "close"
-                        iconSize: Theme.iconMicro
+                        iconSize: Theme.iconCompact
                         foreground: Theme.palette.mutedText
                         Accessible.name: "Limpar pesquisa"
                         onClicked: settingsConversationSearch.clear()
@@ -367,9 +376,10 @@ Item {
                     model: root.sections
                     delegate: VrNavItem {
                         required property var modelData
+                        objectName: "settingsNavItem"
                         Layout.fillWidth: true
                         title: modelData.title
-                        iconSource: Qt.resolvedUrl("../../../assets/" + modelData.icon)
+                        iconKind: modelData.iconKind
                         selected: frontend.currentPage === modelData.page
                         compact: false
                         onActivated: frontend.setCurrentPage(modelData.page)
@@ -413,7 +423,7 @@ Item {
                                     text: settingResult.modelData.title
                                     color: Theme.palette.navText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeControl
                                     font.weight: Font.DemiBold
                                     elide: Text.ElideRight
                                 }
@@ -437,7 +447,7 @@ Item {
                         text: "Nenhuma configuração encontrada."
                         color: Theme.palette.navMuted
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCaption
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.WordWrap
                     }
@@ -472,7 +482,7 @@ Item {
                             color: settingsReturnButton.hovered
                                 ? Theme.palette.navText : Theme.palette.navMuted
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(13)
+                            font.pixelSize: Theme.fontSizeControl
                             font.weight: Font.DemiBold
                             verticalAlignment: Text.AlignVCenter
                         }

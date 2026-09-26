@@ -660,6 +660,17 @@ class StudioBridge(QObject):
         self.refreshProviders()
         self.refreshArchived("")
 
+    @Slot()
+    def refreshKnowledgeData(self) -> None:  # noqa: N802
+        """Reload knowledge surfaces after an imported knowledge package."""
+
+        self._loaded_pages.add(2)
+        self._refresh_dashboard()
+        self._load_knowledge()
+        self._load_reviews()
+        self._clear_review_selection()
+        self._refresh_review_filter_values()
+
     def _refresh_dashboard(self) -> None:
         source_specs = {
             "vrwiki": ("wiki", "vrwiki"),
@@ -674,9 +685,6 @@ class StudioBridge(QObject):
                 """SELECT count(*) FROM classification_reviews r
                    JOIN documents d ON d.id=r.document_id
                    WHERE r.status='pending' AND d.status='active'"""
-            ).fetchone()[0])
-            ocr = int(connection.execute(
-                "SELECT count(*) FROM documents WHERE status='active' AND length(ocr_text)>0"
             ).fetchone()[0])
             conversations = int(connection.execute(
                 "SELECT count(*) FROM conversations WHERE archived=0 AND trashed_at=''"
@@ -745,7 +753,6 @@ class StudioBridge(QObject):
         self._dashboard_metrics = {
             "documents": str(documents),
             "reviews": str(reviews),
-            "ocr": str(ocr),
             "conversations": str(conversations),
         }
         self.dashboardChanged.emit()
@@ -965,10 +972,6 @@ class StudioBridge(QObject):
 ## Conteúdo
 
 {markdown or '_Documento sem Markdown._'}
-
-## OCR
-
-{row.get('ocr_text') or '_Sem OCR associado._'}
 """
             items.append({
                 "reviewId": int(row["id"]),
@@ -1582,7 +1585,6 @@ class StudioBridge(QObject):
             "schema": ("Schema", lambda: SchemaSync(self._settings, self._database, self._sync_progress, schema_path=self._schema_path).sync()),
             "all": ("Wikis + KB + Schema", self._sync_all),
             "wiki_kb": ("Wikis + KB", self._sync_wiki_kb),
-            "ocr": ("OCR portátil", self._install_ocr),
         }
         selected = actions.get(action)
         if selected is None:
@@ -1670,12 +1672,6 @@ class StudioBridge(QObject):
         if self._settings.endoo_wiki_enabled:
             sources.insert(1, "endoo")
         return self._sync_selected(tuple(sources))
-
-    def _install_ocr(self) -> str:
-        from ..ocr import OcrManager
-
-        path = OcrManager(self._settings.tesseract_dir).install_portable(self._sync_progress)
-        return str(path)
 
     def _refresh_review_filter_values(self) -> None:
         try:

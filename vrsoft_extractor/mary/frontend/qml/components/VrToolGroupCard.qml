@@ -1,37 +1,64 @@
 import QtQuick
-import QtQuick.Controls
 import QtQuick.Layouts
 import "../theme"
+import "../theme/ToolIcons.js" as ToolIcons
 
+// Bounded group of tool calls (T3 Code "work group"): a summary row that
+// discloses the member rows flat below it, with no extra card chrome.
 Item {
     id: root
     objectName: "toolGroupCard"
 
     property var modelData: ({})
     property bool groupExpanded: false
+    // Disclosure state is owned by VrChatActivity (keyed by item id) so a
+    // streamed activityData update cannot silently reset an expanded group.
+    property alias disclosureExpanded: root.groupExpanded
+    property var disclosureHost: null
+    signal disclosureToggled(bool expanded)
 
     readonly property var childItems: modelData.items || []
     readonly property int childCount: childItems.length || Number(modelData.memberCount || 0)
     readonly property string titleText: String(modelData.text || modelData.title || (childCount + " ações agrupadas"))
     readonly property string durationLabel: String(modelData.durationLabel || "")
-    readonly property string badgeText: String(modelData.badgeText || (childCount > 0 ? (childCount + " ações") : ""))
     readonly property string stateValue: String(modelData.state || "completed")
     readonly property bool isRunning: stateValue === "running"
     readonly property bool isError: stateValue === "error" || stateValue === "failed"
     readonly property bool isSuccess: stateValue === "completed" || stateValue === "success"
     readonly property bool isWaitingApproval: stateValue === "waiting_approval"
+    readonly property bool canExpand: root.childItems.length > 0
+    readonly property bool reduceMotion: typeof frontend !== "undefined" && frontend !== null
+        ? frontend.reduceMotion : false
 
     implicitHeight: mainColumn.implicitHeight
 
+    function toggleDisclosure() {
+        if (!root.canExpand)
+            return
+        root.groupExpanded = !root.groupExpanded
+        root.disclosureToggled(root.groupExpanded)
+    }
+
+    function restoreMemberDisclosure(loader) {
+        var host = root.disclosureHost
+        if (!host || !loader || !loader.item)
+            return
+        loader.item.disclosureExpanded = host.isDisclosureExpanded(loader.disclosureKey)
+    }
+
+    function syncMemberDisclosures() {
+        for (var i = 0; i < membersRepeater.count; ++i)
+            restoreMemberDisclosure(membersRepeater.itemAt(i))
+    }
+
+    onDisclosureHostChanged: root.syncMemberDisclosures()
+
     function resolveIcon() {
-        if (root.isError) return "close"
-        if (root.isSuccess) return "check"
-        if (root.isWaitingApproval) return "alert"
-        var explicit = String(root.modelData.icon || "")
-        if (explicit === "search") return "search"
-        if (explicit === "document" || explicit === "files") return "files"
-        if (explicit === "terminal" || explicit === "terminalPrompt") return "terminalPrompt"
-        return "hammer"
+        if (root.isError) return "circleAlert"
+        if (root.isWaitingApproval) return "lock"
+        if (root.childItems.length > 0)
+            return ToolIcons.kindFor(root.childItems[0], "hammer")
+        return ToolIcons.kindFor(root.modelData, "hammer")
     }
 
     ColumnLayout {
@@ -40,140 +67,125 @@ Item {
         anchors.right: parent.right
         spacing: Theme.scaledGeometry(4)
 
-        // Group Header Box
         Rectangle {
-            id: headerBox
+            id: header
+            objectName: "toolGroupHeader"
+            Layout.fillWidth: true
+            Layout.preferredHeight: Theme.scaledGeometry(28)
+            radius: Theme.scaledGeometry(6)
+            color: "transparent"
             activeFocusOnTab: true
             Accessible.role: Accessible.Button
             Accessible.name: root.titleText
             Accessible.description: root.groupExpanded ? "Recolher grupo" : "Expandir grupo"
-            Keys.onReturnPressed: root.groupExpanded = !root.groupExpanded
-            Keys.onSpacePressed: root.groupExpanded = !root.groupExpanded
             border.width: activeFocus ? 1 : 0
             border.color: Theme.palette.focus
-            Layout.fillWidth: true
-            Layout.preferredHeight: Theme.scaledGeometry(28)
-            radius: Theme.scaledGeometry(4)
-            color: "transparent"
-            clip: true
+            Keys.onReturnPressed: root.toggleDisclosure()
+            Keys.onSpacePressed: root.toggleDisclosure()
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: Theme.scaledGeometry(4)
-                anchors.rightMargin: Theme.scaledGeometry(6)
-                spacing: Theme.scaledGeometry(7)
+                anchors.leftMargin: Theme.scaledGeometry(2)
+                anchors.rightMargin: Theme.scaledGeometry(2)
+                spacing: Theme.scaledGeometry(6)
 
-                VrLineIcon {
-                    Layout.preferredWidth: Theme.iconCompact
-                    Layout.preferredHeight: Theme.iconCompact
-                    kind: root.resolveIcon()
-                    foreground: root.isError
-                        ? Theme.palette.danger
-                        : (root.isSuccess
-                            ? Theme.palette.success
-                            : (root.isWaitingApproval ? Theme.palette.warning : Theme.palette.mutedText))
+                Item {
+                    Layout.preferredWidth: Theme.scaledGeometry(24)
+                    Layout.preferredHeight: Theme.scaledGeometry(24)
+                    VrLineIcon {
+                        anchors.centerIn: parent
+                        width: Theme.iconSmall
+                        height: Theme.iconSmall
+                        kind: root.resolveIcon()
+                        opacity: root.isError ? 0.75 : 0.9
+                        foreground: root.isError
+                            ? Theme.palette.danger
+                            : (root.isWaitingApproval ? Theme.palette.warning : Theme.palette.mutedText)
+                    }
                 }
 
                 VrShimmerText {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     text: root.titleText
                     running: root.isRunning
                     color: root.isError
                         ? Theme.palette.danger
                         : (root.isRunning ? Theme.palette.text : Theme.palette.mutedText)
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(12)
-                    font.weight: root.isRunning ? Font.DemiBold : Font.Normal
+                    font.pixelSize: Theme.fontSize(13)
                     elide: Text.ElideRight
                     renderType: Theme.textRenderType
                 }
 
-                // Duration badge
                 Text {
                     visible: root.durationLabel.length > 0
                     text: root.durationLabel
                     color: Theme.palette.mutedText
+                    opacity: 0.8
                     font.family: Theme.monospaceFontFamily
                     font.pixelSize: Theme.fontSizeMicro
                     renderType: Theme.textRenderType
                 }
 
-                // Group count badge
-                Rectangle {
-                    visible: root.badgeText.length > 0
-                    Layout.preferredHeight: Theme.scaledGeometry(18)
-                    Layout.preferredWidth: badgeLabel.implicitWidth + 10
-                    radius: Theme.scaledGeometry(3)
-                    color: root.isError
-                        ? Qt.rgba(Theme.palette.danger.r, Theme.palette.danger.g, Theme.palette.danger.b, 0.15)
-                        : (root.isSuccess
-                            ? Qt.rgba(Theme.palette.success.r, Theme.palette.success.g, Theme.palette.success.b, 0.15)
-                            : (root.isWaitingApproval
-                                ? Qt.rgba(Theme.palette.warning.r, Theme.palette.warning.g, Theme.palette.warning.b, 0.15)
-                                : Qt.rgba(Theme.palette.mutedText.r, Theme.palette.mutedText.g, Theme.palette.mutedText.b, 0.12)))
-
-                    Text {
-                        id: badgeLabel
-                        anchors.centerIn: parent
-                        text: root.badgeText
-                        color: root.isError
-                            ? Theme.palette.danger
-                            : (root.isSuccess
-                                ? Theme.palette.success
-                                : (root.isWaitingApproval ? Theme.palette.warning : Theme.palette.mutedText))
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSizeMicro
-                        font.weight: Font.Medium
-                        renderType: Theme.textRenderType
-                    }
-                }
-
                 VrLineIcon {
                     Layout.preferredWidth: Theme.iconMicro
                     Layout.preferredHeight: Theme.iconMicro
-                    kind: root.groupExpanded ? "chevronDown" : "chevronRight"
+                    kind: "chevronRight"
                     foreground: Theme.palette.mutedText
+                    opacity: root.canExpand ? 0.7 : 0
+                    rotation: root.groupExpanded ? 90 : 0
+                    Behavior on rotation {
+                        enabled: !root.reduceMotion
+                        NumberAnimation { duration: Theme.fastDuration; easing.type: Easing.OutCubic }
+                    }
                 }
             }
 
-            HoverHandler { cursorShape: Qt.PointingHandCursor }
-            TapHandler {
-                onTapped: root.groupExpanded = !root.groupExpanded
-            }
+            HoverHandler { id: hover; cursorShape: Qt.PointingHandCursor }
+            TapHandler { onTapped: root.toggleDisclosure() }
         }
 
-        // Expandable children container
-        Rectangle {
+        ColumnLayout {
+            id: childrenColumn
             visible: root.groupExpanded && root.childItems.length > 0
             Layout.fillWidth: true
-            Layout.preferredHeight: childrenColumn.implicitHeight + 8
-            radius: Theme.scaledGeometry(4)
-            color: Theme.palette.surfaceRaised
-            border.width: 1
-            border.color: Theme.palette.chatBorder
-            clip: true
+            Layout.topMargin: Theme.scaledGeometry(4)
+            spacing: Theme.scaledGeometry(4)
 
-            ColumnLayout {
-                id: childrenColumn
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.margins: Theme.scaledGeometry(4)
-                spacing: Theme.scaledGeometry(3)
+            Repeater {
+                id: membersRepeater
+                model: root.childItems
 
-                Repeater {
-                    model: root.childItems
-
-                    Loader {
-                        required property var modelData
-                        Layout.fillWidth: true
-                        sourceComponent: {
-                            var t = String(modelData.type || modelData.itemType || "")
-                            if (t === "commandExecution" || modelData.command) return subCommandComponent
-                            return subToolComponent
-                        }
-                        onLoaded: {
-                            if (item) item.modelData = Qt.binding(function() { return modelData })
+                Loader {
+                    id: childLoader
+                    required property var modelData
+                    Layout.fillWidth: true
+                    readonly property string disclosureKey: root.disclosureHost
+                        ? root.disclosureHost.disclosureKeyFor(childLoader.modelData) : ""
+                    sourceComponent: {
+                        var t = String(modelData.type || modelData.itemType || "")
+                        if (t === "commandExecution" || modelData.command) return subCommandComponent
+                        return subToolComponent
+                    }
+                    onLoaded: root.restoreMemberDisclosure(childLoader)
+                    onDisclosureKeyChanged: root.restoreMemberDisclosure(childLoader)
+                    // A real binding (not an onLoaded assignment) so member rows
+                    // that are reused when the group updates keep showing the
+                    // current event data.
+                    Binding {
+                        target: childLoader.item
+                        property: "modelData"
+                        value: childLoader.modelData
+                        when: childLoader.item !== null
+                        restoreMode: Binding.RestoreNone
+                    }
+                    Connections {
+                        target: childLoader.item
+                        function onDisclosureToggled(expanded) {
+                            var host = root.disclosureHost
+                            if (host && childLoader.disclosureKey !== "")
+                                host.setDisclosureExpanded(childLoader.disclosureKey, expanded)
                         }
                     }
                 }
@@ -183,15 +195,11 @@ Item {
 
     Component {
         id: subCommandComponent
-        VrCommandCard {
-            property var modelData: ({})
-        }
+        VrCommandCard {}
     }
 
     Component {
         id: subToolComponent
-        VrToolCard {
-            property var modelData: ({})
-        }
+        VrToolCard {}
     }
 }

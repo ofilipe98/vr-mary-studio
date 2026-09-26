@@ -40,7 +40,7 @@ Dialog {
                 text: "Usage limits"
                 color: Theme.palette.text
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(12)
+                font.pixelSize: Theme.fontSizeCaption
                 font.weight: Font.DemiBold
             }
             Text {
@@ -148,7 +148,7 @@ Dialog {
                         text: root.formatAccountTitle(account.modelData)
                         color: Theme.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCaption
                         elide: Text.ElideRight
                     }
                     Repeater {
@@ -171,7 +171,7 @@ Dialog {
                                 text: windowRow.modelData.label || "Session"
                                 color: Theme.palette.mutedText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(12)
+                                font.pixelSize: Theme.fontSizeCaption
                                 elide: Text.ElideRight
                             }
                             Text {
@@ -183,7 +183,7 @@ Dialog {
                                 text: windowRow.remaining < 0 ? "—" : Math.round(windowRow.remaining) + "% left"
                                 color: Theme.palette.text
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(12)
+                                font.pixelSize: Theme.fontSizeCaption
                                 font.weight: Font.DemiBold
                             }
                             Item {
@@ -194,30 +194,23 @@ Dialog {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: Theme.scaledGeometry(40)
                                 Layout.preferredHeight: Theme.scaledGeometry(20)
-                                Rectangle {
-                                    id: track
+
+                                VrProgressBar {
+                                    objectName: "usageFill"
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
                                     anchors.verticalCenter: parent.verticalCenter
-                                    width: parent.width
-                                    height: Theme.scaledGeometry(10)
-                                    radius: Theme.scaledGeometry(5)
-                                    color: Theme.palette.chatControl
-                                    Rectangle {
-                                        objectName: "usageFill"
-                                        height: parent.height
-                                        width: parent.width * Math.max(0, windowRow.remaining) / 100
-                                        radius: parent.radius
-                                        color: Theme.palette.text
-                                        visible: windowRow.remaining > 0
-                                    }
-                                    Rectangle {
-                                        visible: windowRow.pace >= 0
-                                        x: Math.max(0, Math.min(track.width - width, track.width * windowRow.pace))
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        width: 1
-                                        height: Theme.scaledGeometry(18)
-                                        color: Theme.palette.mutedText
-                                        opacity: 0.6
-                                    }
+                                    barHeight: Theme.scaledGeometry(10)
+                                    from: 0
+                                    to: 100
+                                    value: Math.max(0, windowRow.remaining)
+                                    markerPosition: windowRow.pace
+                                    accentColor: windowRow.remaining <= 15
+                                        ? Theme.palette.danger
+                                        : (windowRow.remaining <= 40
+                                            ? Theme.palette.warning
+                                            : Theme.palette.text)
+                                    accessibleName: (windowRow.modelData.label || "Limite") + " restante"
                                 }
                             }
                             RowLayout {
@@ -260,14 +253,18 @@ Dialog {
             Text {
                 Layout.fillWidth: true
                 visible: root.accountsList.length === 0
-                text: root.status === "unsupported"
-                    ? "Este provedor não disponibiliza limites de uso localmente."
-                    : root.status === "error" || root.status === "unavailable"
-                        ? "Não foi possível consultar os limites de uso."
-                        : "Carregando informações de limite de uso…"
+                text: {
+                    if (root.snapshot && root.snapshot.error)
+                        return String(root.snapshot.error)
+                    return root.status === "unsupported"
+                        ? "Este provedor não disponibiliza limites de uso localmente."
+                        : root.status === "error" || root.status === "unavailable"
+                            ? "Não foi possível consultar os limites de uso."
+                            : "Carregando informações de limite de uso…"
+                }
                 color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(12)
+                font.pixelSize: Theme.fontSizeCaption
                 wrapMode: Text.WordWrap
             }
         }

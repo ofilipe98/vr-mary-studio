@@ -96,6 +96,81 @@ def test_opencode_registers_mcp_in_every_profile(tmp_path, profile):
     assert "vr-mary-studio" in config.get("mcp", {})
 
 
+@pytest.mark.parametrize("vr_tools_enabled", [False, True])
+def test_opencode_mcp_command_follows_vr_mode_without_losing_read_access(
+    tmp_path, vr_tools_enabled
+):
+    knowledge = (tmp_path / "mary").resolve()
+    knowledge.mkdir()
+    conhecimento = knowledge / "conhecimento"
+    conhecimento.mkdir()
+    config = json.loads(
+        _opencode_environment(
+            "auto", knowledge, vr_tools_enabled=vr_tools_enabled
+        )["OPENCODE_CONFIG_CONTENT"]
+    )
+    command = config["mcp"]["vr-mary-studio"]["command"]
+    assert ("--disable-vr-tools" in command) is not vr_tools_enabled
+    permission = config["permission"]
+    for capability in ("read", "glob", "grep", "list"):
+        assert permission[capability] == "allow"
+    if vr_tools_enabled:
+        pattern = str(knowledge).replace("\\", "/") + "/**"
+        assert permission["external_directory"][pattern] == "allow"
+        assert permission["edit"][pattern] == "deny"
+        assert any(
+            key.endswith("/tools/vr-search.ps1*") and value == "allow"
+            for key, value in permission["bash"].items()
+        )
+    else:
+        pattern = str(conhecimento).replace("\\", "/") + "/**"
+        root_pattern = str(knowledge).replace("\\", "/") + "/**"
+        assert permission["external_directory"][pattern] == "allow"
+        assert root_pattern not in permission["external_directory"]
+        assert permission["edit"][pattern] == "deny"
+        assert not any(
+            "vr-search.ps1" in key for key in permission["bash"].keys()
+        )
+        conhecimento_norm = str(conhecimento).replace("\\", "/")
+        assert permission["bash"][f"*{conhecimento_norm}*"] == "deny"
+
+
+@pytest.mark.parametrize("profile", ["auto", "research_readonly", "full_access"])
+def test_opencode_off_environment_per_profile(tmp_path, profile):
+    knowledge = (tmp_path / "mary").resolve()
+    knowledge.mkdir()
+    conhecimento = knowledge / "conhecimento"
+    conhecimento.mkdir()
+    config = json.loads(
+        _opencode_environment(
+            profile, knowledge, vr_tools_enabled=False
+        )["OPENCODE_CONFIG_CONTENT"]
+    )
+    command = config["mcp"]["vr-mary-studio"]["command"]
+    assert "--disable-vr-tools" in command
+    permission = config["permission"]
+
+    # In all profiles, verify absence of vr-search.ps1 exception
+    bash_perms = permission.get("bash", {}) if isinstance(permission, dict) else {}
+    assert not any("vr-search.ps1" in key for key in bash_perms.keys())
+
+    if profile == "full_access":
+        # full_access maintains broad filesystem permission and is deliberately not a canonical sandbox
+        assert permission == "allow"
+    else:
+        for capability in ("read", "glob", "grep", "list"):
+            assert permission[capability] == "allow"
+        pattern = str(conhecimento).replace("\\", "/") + "/**"
+        root_pattern = str(knowledge).replace("\\", "/") + "/**"
+        assert permission["external_directory"][pattern] == "allow"
+        assert root_pattern not in permission["external_directory"]
+        if "edit" in permission:
+            assert permission["edit"][pattern] == "deny"
+        if "bash" in permission:
+            conhecimento_norm = str(conhecimento).replace("\\", "/")
+            assert permission["bash"][f"*{conhecimento_norm}*"] == "deny"
+
+
 def test_mcp_real_process_obeys_frozen_scope_and_reads_returned_reference(tmp_path):
     index, contexts = indexed_contexts(tmp_path / "mary")
     scope_path = create_scope()
@@ -142,15 +217,29 @@ def test_turn_freezes_ui_selection_in_all_modes(tmp_path, mode):
         orchestrator.send(cid, "Outer", lambda event: done.set() if event.kind == "turn_completed" else None,
             use_vr=mode != "off", vr_mode=mode, application_contexts=selections)
         assert done.wait(20)
-        assert captured and captured[0]["application_contexts"] == [contexts[0]]
-        assert captured[0]["master_fallback"] == (mode != "off")
+        if mode == "off":
+            assert captured and captured[0]["application_contexts"] is None
+            assert captured[0]["master_fallback"] is False
+        else:
+            assert captured and captured[0]["application_contexts"] == [contexts[0]]
+            assert captured[0]["master_fallback"] is True
         if mode == "vr":
-            assert "class Outer" in provider.sent[0]["message"]
+            # Tool-driven VR: the frozen selection is not injected as context;
+            # the model reaches it through the knowledge tools.
+            assert "Contrato de acesso tool-driven" in provider.sent[0]["message"]
+            assert "class Outer" not in provider.sent[0]["message"]
+            hits = orchestrator.retrieval_service.search(
+                "Outer",
+                source="code",
+                application_contexts=selections,
+                master_fallback=True,
+            )["results"]
+            assert any("class Outer" in hit.get("excerpt", "") for hit in hits)
     finally:
         orchestrator.close()
 
 
-def test_master_fallback_reaches_vr_prompt_only_when_needed(tmp_path):
+def test_master_fallback_reaches_vr_tools_only_when_needed(tmp_path):
     settings, database, _, _ = _setup_test_env(tmp_path)
     _, contexts = indexed_contexts_with_master(settings.root / "isolated")
     settings = replace(settings, root=settings.root / "isolated")
@@ -173,8 +262,17 @@ def test_master_fallback_reaches_vr_prompt_only_when_needed(tmp_path):
             use_vr=True, vr_mode="vr", application_contexts=selections)
         assert done.wait(20)
         message = provider.sent[0]["message"]
-        assert "fallback VRMaster" in message
-        assert "class Central" in message
+        # No automatic retrieval: the fallback is reached through vr_search.
+        assert "Contrato de acesso tool-driven" in message
+        assert "class Central" not in message
+        hits = orchestrator.retrieval_service.search(
+            "Central",
+            source="code",
+            application_contexts=selections,
+            master_fallback=True,
+        )["results"]
+        assert any("fallback VRMaster" in hit.get("title", "") for hit in hits)
+        assert any("class Central" in hit.get("excerpt", "") for hit in hits)
         # The persisted scope stays the user selection; VRMaster is only a fallback.
         assert captured and captured[0]["application_contexts"] == [vra]
         assert captured[0]["master_fallback"] is True
@@ -214,7 +312,7 @@ def test_mismatched_stack_trace_falls_back_to_available_release(tmp_path):
         orchestrator.close()
 
 
-def test_off_tool_output_drives_answer_and_rejected_send_preserves_scope(tmp_path):
+def test_vr_tool_output_drives_answer_and_rejected_send_preserves_scope(tmp_path):
     settings, database, _, _ = _setup_test_env(tmp_path)
     orchestrator = ChatOrchestrator(settings, database)
     started, done = threading.Event(), threading.Event()
@@ -226,17 +324,18 @@ def test_off_tool_output_drives_answer_and_rejected_send_preserves_scope(tmp_pat
             assert success
             payload = json.loads(content_items[0]["text"])
             self.answer = payload["content"]
-            self.callback(RuntimeEvent(self.cid, "assistant_delta", self.answer))
+            self.callback(RuntimeEvent(self.cid, "assistant_completed", payload={
+                "final_text": self.answer, "validated_public": True}))
             self.callback(RuntimeEvent(self.cid, "turn_completed"))
     provider = ToolProvider("codex")
     orchestrator.providers["codex"] = provider
-    cid = orchestrator.new_conversation("codex", "sol", defer_provider_start=True, vr_enabled=False)
+    cid = orchestrator.new_conversation("codex", "sol", defer_provider_start=True, vr_mode="vr")
     try:
-        orchestrator.send(cid, "Leia a classe", lambda e: done.set() if e.kind == "turn_completed" else None, use_vr=False)
+        orchestrator.send(cid, "Leia a classe", lambda e: done.set() if e.kind == "turn_completed" else None, use_vr=True)
         assert started.wait(10)
         path = orchestrator._turn_access_paths[cid]
         with pytest.raises(Exception):
-            orchestrator.send(cid, "Rejeitar", lambda e: None, use_vr=False, application_contexts=[])
+            orchestrator.send(cid, "Rejeitar", lambda e: None, use_vr=True, application_contexts=[])
         assert orchestrator._turn_access_paths[cid] == path
         assert orchestrator._turn_application_contexts[cid] is None
         provider.callback(RuntimeEvent(cid, "dynamic_tool_requested", "vr_read", {
@@ -245,6 +344,41 @@ def test_off_tool_output_drives_answer_and_rejected_send_preserves_scope(tmp_pat
         assert done.wait(10)
         assert "gerarSpedFiscal" in provider.answer
         assert not Path(path).exists()
+    finally:
+        orchestrator.close()
+
+
+def test_off_mode_refuses_vr_tool_and_keeps_turn_scope_untouched(tmp_path):
+    settings, database, _, _ = _setup_test_env(tmp_path)
+    orchestrator = ChatOrchestrator(settings, database)
+    started = threading.Event()
+    refusals: list[tuple[str, bool, str]] = []
+
+    class ToolProvider(FakeProvider, CodexProvider):
+        def send_message(self, cid, native, model, effort, workspace, message, callback, options=None, *args):
+            self.callback, self.cid = callback, cid
+            started.set()
+
+        def respond_dynamic_tool(self, request_id, content_items, success=True):
+            refusals.append((request_id, success, content_items[0]["text"]))
+
+    provider = ToolProvider("codex")
+    orchestrator.providers["codex"] = provider
+    cid = orchestrator.new_conversation("codex", "sol", defer_provider_start=True, vr_enabled=False)
+    try:
+        orchestrator.send(cid, "Leia a classe", lambda e: None, use_vr=False)
+        assert started.wait(10)
+        path = orchestrator._turn_access_paths[cid]
+        provider.callback(RuntimeEvent(cid, "dynamic_tool_requested", "vr_read", {
+            "tool": "vr_read", "request_id": "read-code", "arguments": {
+                "reference": "br.com.vrsoftware.fiscal.SpedFiscalManager"}}))
+        deadline = 5.0
+        while deadline > 0 and not refusals:
+            deadline -= 0.05
+            threading.Event().wait(0.05)
+        assert refusals == [("read-code", False, "Tool VR indisponível no modo OFF.")]
+        assert orchestrator._turn_dynamic_candidates.get(cid, []) == []
+        assert orchestrator._turn_access_paths[cid] == path
     finally:
         orchestrator.close()
 
@@ -336,18 +470,44 @@ def test_legacy_codex_session_gets_tools_without_losing_local_history(tmp_path):
     orchestrator = ChatOrchestrator(settings, database)
     provider = FakeProvider("codex")
     orchestrator.providers["codex"] = provider
-    cid = orchestrator.new_conversation("codex", "sol", defer_provider_start=True, vr_enabled=False)
-    database.update_conversation(cid, native_id="legacy-thread")
+    cid = orchestrator.new_conversation("codex", "sol", defer_provider_start=True, vr_enabled=True)
+    database.update_conversation(cid, native_id_vr="legacy-thread")
     database.add_message(cid, "user", "HISTORY_MUST_SURVIVE")
     done = threading.Event()
     try:
-        orchestrator.send(cid, "Continue", lambda e: done.set() if e.kind == "turn_completed" else None, use_vr=False)
+        orchestrator.send(cid, "Continue", lambda e: done.set() if e.kind == "turn_completed" else None, use_vr=True)
         assert done.wait(10)
         assert provider.starts == [cid]
         assert "HISTORY_MUST_SURVIVE" in provider.sent[0]["message"]
         assert {t["name"] for t in provider.start_options[0].dynamic_tools} >= {"vr_search", "vr_sources", "vr_read"}
         row = database.get_conversation(cid)
-        assert row["native_id"] == row["native_tools_id"] != "legacy-thread"
+        assert row["native_id_vr"] == row["native_tools_id_vr"] != "legacy-thread"
         assert any(m["content"] == "HISTORY_MUST_SURVIVE" for m in database.messages(cid))
+    finally:
+        orchestrator.close()
+
+
+def test_off_ignores_invalid_application_contexts_without_warning(tmp_path):
+    settings, database, _, _ = _setup_test_env(tmp_path)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = FakeProvider("codex", final_text="Resposta local")
+    orchestrator.providers["codex"] = provider
+    cid = orchestrator.new_conversation("codex", "sol", defer_provider_start=True, vr_enabled=False)
+    done = threading.Event()
+    invalid_contexts = [{"app_id": "nonexistent_app", "version": "99.0", "variant_id": "default", "package_id": "none"}]
+    try:
+        orchestrator.send(
+            cid,
+            "Pergunta geral em OFF",
+            lambda event: done.set() if event.kind == "turn_completed" else None,
+            use_vr=False,
+            vr_mode="off",
+            application_contexts=invalid_contexts,
+        )
+        assert done.wait(20)
+        sent_message = provider.sent[0]["message"]
+        assert "FONTES LOCAIS OPCIONAIS — SOMENTE LEITURA:" in sent_message
+        assert "O contexto de codigo selecionado esta indisponivel" not in sent_message
+        assert "contexto de codigo" not in sent_message
     finally:
         orchestrator.close()

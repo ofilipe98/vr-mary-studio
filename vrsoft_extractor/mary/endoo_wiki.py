@@ -26,7 +26,6 @@ from .content import (
 from .db import MaryDatabase
 from .indexer import export_catalog
 from .models import KnowledgeDocument, SyncStats, utc_now
-from .ocr import OcrManager
 
 
 LOGGER = logging.getLogger(__name__)
@@ -42,7 +41,6 @@ class EndooWikiSync:
         self.settings = settings
         self.database = database
         self.progress = progress or (lambda _message: None)
-        self.ocr = OcrManager(settings.tesseract_dir)
         self._unavailable_asset_hosts: set[str] = set()
 
     def login(self) -> Path:
@@ -282,7 +280,6 @@ class EndooWikiSync:
         document_dir = target_path(self.settings.root, document).parent
         assets: list[Path] = []
         replacements: dict[str, str] = {}
-        ocr_parts: list[str] = []
         for image_url in image_urls:
             image_host = (urllib.parse.urlsplit(image_url).hostname or "").casefold()
             if image_host in self._unavailable_asset_hosts:
@@ -297,9 +294,6 @@ class EndooWikiSync:
                 replacements[image_url] = Path(
                     os.path.relpath(local, document_dir)
                 ).as_posix()
-                ocr = self.ocr.extract(local)
-                if ocr.text:
-                    ocr_parts.append(f"### {local.name}\n\n{ocr.text}")
             except EndooAssetUnavailable as exc:
                 self._unavailable_asset_hosts.add(exc.host)
                 LOGGER.warning(
@@ -313,9 +307,8 @@ class EndooWikiSync:
                 )
         document.markdown = replace_asset_urls(markdown, replacements)
         document.assets = [str(path) for path in assets]
-        document.ocr_text = "\n\n".join(ocr_parts)
         document.content_hash = sha256_text(
-            "\n".join([document.title, document.markdown, document.ocr_text])
+            "\n".join([document.title, document.markdown])
         )
         if not document.revision:
             document.revision = document.content_hash[:16]

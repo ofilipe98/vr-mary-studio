@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from .classpath import ClasspathResolver
+from .code_references import parse_java_code_reference
 from .erp_releases import ErpReleaseCatalog
 from .java_ast import JavaAstUnavailable, parse_java_ast, tree_sitter_available
 from .jvm_batches import (
@@ -944,6 +945,233 @@ class JavaCodeIndex:
                 size += len(line) + 1
         return {**result, "excerpt": "\n".join(selected), "line_start": start,
                 "line_end": start + len(selected) - 1}
+
+    def resolve_decompiled_reference(
+        self,
+        reference: str,
+        *,
+        release_id: str = "current",
+        max_body_chars: int = 200_000,
+    ) -> dict[str, Any]:
+        """Resolve a decompiled Java code reference to its source and member target line."""
+        self.initialize()
+        parsed = parse_java_code_reference(reference)
+
+        resolved_release_id = str(release_id or "").strip()
+        if resolved_release_id in ("current", ""):
+            try:
+                statuses = self.catalog.list_statuses(full_hash=False)
+                if statuses:
+                    resolved_release_id = str(statuses[0].get("release_id") or "")
+                else:
+                    resolved_release_id = ""
+            except Exception:
+                resolved_release_id = ""
+
+        if parsed is None:
+            return {
+                "state": "not_found",
+                "reference": str(reference or ""),
+                "release_id": resolved_release_id,
+                "message": f"Referência '{reference}' não corresponde a uma referência Java válida.",
+            }
+
+        if not resolved_release_id:
+            return {
+                "state": "not_found",
+                "reference": parsed.raw,
+                "release_id": "",
+                "message": "Nenhuma release ativa encontrada no catálogo.",
+            }
+
+        with self.store.connect() as connection:
+            if parsed.qualified_class_name:
+                source_rows = connection.execute(
+                    """SELECT id, source_key, jar_relative_path, source_relative_path,
+                              package_name, primary_type, qualified_name, tool, body
+                       FROM code_sources
+                       WHERE release_id = ?
+                         AND schema_version = ?
+                         AND lower(qualified_name) = lower(?)""",
+                    (resolved_release_id, CODE_INDEX_SCHEMA_VERSION, parsed.qualified_class_name),
+                ).fetchall()
+            else:
+                source_rows = connection.execute(
+                    """SELECT id, source_key, jar_relative_path, source_relative_path,
+                              package_name, primary_type, qualified_name, tool, body
+                       FROM code_sources
+                       WHERE release_id = ?
+                         AND schema_version = ?
+                         AND lower(primary_type) = lower(?)""",
+                    (resolved_release_id, CODE_INDEX_SCHEMA_VERSION, parsed.class_name),
+                ).fetchall()
+
+            if not source_rows:
+                target_name = parsed.qualified_class_name or parsed.class_name
+                return {
+                    "state": "not_found",
+                    "reference": parsed.raw,
+                    "release_id": resolved_release_id,
+                    "message": f"Classe '{target_name}' não encontrada na release {resolved_release_id}.",
+                }
+
+            if len(source_rows) > 1:
+                candidates = sorted(
+                    [
+                        {
+                            "qualified_name": str(row["qualified_name"]),
+                            "jar_relative_path": str(row["jar_relative_path"]),
+                            "source_key": str(row["source_key"]),
+                        }
+                        for row in source_rows
+                    ],
+                    key=lambda c: (c["qualified_name"], c["jar_relative_path"], c["source_key"]),
+                )[:20]
+                target_name = parsed.qualified_class_name or parsed.class_name
+                return {
+                    "state": "ambiguous",
+                    "reference": parsed.raw,
+                    "release_id": resolved_release_id,
+                    "message": f"Referência ambígua: {len(source_rows)} fontes encontradas para '{target_name}'.",
+                    "candidates": candidates,
+                }
+
+            source = source_rows[0]
+            source_id = source["id"]
+            raw_body = str(source["body"])
+            tool = str(source["tool"])
+            source_relative_path = str(source["source_relative_path"])
+            qualified_name = str(source["qualified_name"])
+            primary_type = str(source["primary_type"])
+            package_name = str(source["package_name"])
+            source_key = str(source["source_key"])
+            jar_relative_path = str(source["jar_relative_path"])
+
+            matched_symbol_info: dict[str, Any] | None = None
+            if parsed.member_name:
+                symbol_rows = connection.execute(
+                    """SELECT kind, simple_name, signature, line_start
+                       FROM code_symbols
+                       WHERE source_id = ?
+                         AND lower(simple_name) = lower(?)""",
+                    (source_id, parsed.member_name),
+                ).fetchall()
+
+                if not symbol_rows:
+                    return {
+                        "state": "not_found",
+                        "reference": parsed.raw,
+                        "release_id": resolved_release_id,
+                        "message": f"Membro '{parsed.member_name}' não encontrado na classe '{qualified_name}'.",
+                    }
+
+                if len(symbol_rows) == 1:
+                    target_symbol = str(symbol_rows[0]["simple_name"])
+                    target_kind = str(symbol_rows[0]["kind"])
+                    raw_target_line = int(symbol_rows[0]["line_start"])
+                    overload_count = 1
+                    matched_symbol_info = dict(symbol_rows[0])
+                else:
+                    target_symbol = parsed.member_name
+                    target_kind = str(symbol_rows[0]["kind"])
+                    raw_target_line = 0
+                    clean_target_line = 0
+                    overload_count = len(symbol_rows)
+                    matched_symbol_info = None
+            else:
+                type_rows = connection.execute(
+                    """SELECT kind, simple_name, signature, line_start
+                       FROM code_symbols
+                       WHERE source_id = ?
+                         AND kind IN ('class', 'interface', 'enum', 'record', 'annotation')
+                         AND lower(simple_name) = lower(?)""",
+                    (source_id, primary_type),
+                ).fetchall()
+
+                if len(type_rows) == 1:
+                    target_symbol = str(type_rows[0]["simple_name"])
+                    target_kind = str(type_rows[0]["kind"])
+                    raw_target_line = int(type_rows[0]["line_start"])
+                    overload_count = 1
+                    matched_symbol_info = dict(type_rows[0])
+                else:
+                    target_symbol = primary_type
+                    target_kind = "class"
+                    raw_target_line = 1
+                    overload_count = 1
+                    matched_symbol_info = None
+
+        clean_result = clean_decompiled_source(
+            raw_body,
+            source_relative_path=source_relative_path,
+            tool=tool,
+        )
+        clean_body = clean_result.body
+        clean_available = clean_result.available
+        clean_status = clean_result.status
+        clean_note = clean_result.note
+
+        if overload_count > 1:
+            clean_target_line = 0
+        elif clean_status == "cleaned" and matched_symbol_info is not None:
+            parsed_clean = parse_java_source(clean_body)
+            clean_matches = [
+                s
+                for s in parsed_clean.symbols
+                if s["kind"] == matched_symbol_info["kind"]
+                and s["simple_name"] == matched_symbol_info["simple_name"]
+                and s.get("signature", "").strip() == matched_symbol_info.get("signature", "").strip()
+            ]
+            if len(clean_matches) == 1:
+                clean_target_line = int(clean_matches[0]["line_start"])
+            else:
+                clean_target_line = 0
+        else:
+            clean_target_line = raw_target_line
+
+        def _truncate_decompiled_body(text: str, max_chars: int) -> tuple[str, bool]:
+            if len(text) <= max_chars:
+                return text, False
+            cutoff = text.rfind("\n", 0, max_chars + 1)
+            if cutoff == -1:
+                return "", True
+            return text[:cutoff], True
+
+        final_raw_body, raw_truncated = _truncate_decompiled_body(raw_body, max_body_chars)
+        final_clean_body, clean_truncated = _truncate_decompiled_body(clean_body, max_body_chars)
+        is_truncated = raw_truncated or clean_truncated
+
+        raw_line_count = len(final_raw_body.splitlines())
+        if raw_target_line > raw_line_count:
+            raw_target_line = 0
+
+        clean_line_count = len(final_clean_body.splitlines())
+        if clean_target_line > clean_line_count:
+            clean_target_line = 0
+
+        return {
+            "state": "ready",
+            "reference": parsed.raw,
+            "release_id": resolved_release_id,
+            "title": primary_type,
+            "qualified_name": qualified_name,
+            "package_name": package_name,
+            "source_key": source_key,
+            "jar_relative_path": jar_relative_path,
+            "source_relative_path": source_relative_path,
+            "decompiler_tool": tool,
+            "body": final_raw_body,
+            "clean_body": final_clean_body,
+            "clean_available": clean_available,
+            "clean_status": clean_status,
+            "clean_note": clean_note,
+            "target_symbol": target_symbol,
+            "target_kind": target_kind,
+            "raw_target_line": raw_target_line,
+            "clean_target_line": clean_target_line,
+            "overload_count": overload_count,
+            "truncated": is_truncated,
+        }
 
     def status(self, release_id: str = "") -> dict[str, Any]:
         self.initialize()

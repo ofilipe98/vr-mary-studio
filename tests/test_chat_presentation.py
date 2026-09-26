@@ -2,13 +2,14 @@
 import pytest
 
 import os
+import threading
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
-from PySide6.QtCore import QObject, QSettings, Qt
-from PySide6.QtGui import QColor, QTextDocument
+from PySide6.QtCore import QMetaObject, QObject, QSettings, Qt
+from PySide6.QtGui import QColor, QTextCursor, QTextDocument
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 from vrsoft_extractor.mary.brand import brand_palette
@@ -21,6 +22,7 @@ from vrsoft_extractor.mary.frontend.studio import StudioBridge
 from vrsoft_extractor.mary.frontend.text_rendering import presentation_blocks
 from vrsoft_extractor.mary.frontend.text_rendering import CodeSyntaxHighlighter
 from vrsoft_extractor.mary.frontend.text_rendering import apply_message_document_style
+from vrsoft_extractor.mary.frontend.text_rendering import message_chip_ranges
 
 pytestmark = pytest.mark.qml
 
@@ -43,7 +45,9 @@ def test_file_reference_anchors_render_as_chips():
     chip = formats["file_links.py · L12"]
     assert chip.anchorHref() == "vr-file:mary/frontend/file_links.py#L12"
     assert chip.fontFamilies() == ["Consolas"]
-    assert chip.background().style() != Qt.BrushStyle.NoBrush
+    # t3code parity: VrInlineChipLayer paints the rounded fill and border, so
+    # the document itself carries no flat fragment background.
+    assert chip.background().style() == Qt.BrushStyle.NoBrush
     assert not chip.fontUnderline()
     # t3code parity: the chip follows the theme foreground, not the link accent.
     assert chip.foreground().color().name() == "#d6d6d9"
@@ -52,6 +56,29 @@ def test_file_reference_anchors_render_as_chips():
     assert link.anchorHref() == "https://example.com"
     assert link.background().style() == Qt.BrushStyle.NoBrush
     assert link.foreground().color().name() == "#ffad70"
+    ranges = message_chip_ranges(document)
+    assert [item["kind"] for item in ranges] == ["file"]
+    assert ranges[0]["end"] > ranges[0]["start"]
+
+
+def test_message_chip_ranges_select_inline_code_and_skip_fences():
+    QApplication.instance() or QApplication([])
+    markdown = (
+        "Em `setItensNota`, veja `AliquotaDAO.java:14-60` e `src/app.py:12`.\n\n"
+        "```python\npath = `não-é-chip`\n```\n"
+    )
+    document = QTextDocument()
+    document.setMarkdown(markdown)
+    apply_message_document_style(document, markdown, dark=True, monospace_family="Consolas")
+    ranges = message_chip_ranges(document)
+    assert [item["kind"] for item in ranges] == ["code", "code", "code"]
+    texts = []
+    cursor = QTextCursor(document)
+    for item in ranges:
+        cursor.setPosition(int(item["start"]))
+        cursor.setPosition(int(item["end"]), QTextCursor.KeepAnchor)
+        texts.append(cursor.selectedText())
+    assert texts == ["setItensNota", "AliquotaDAO.java:14-60", "src/app.py:12"]
 
 
 def test_message_style_follows_active_palette():
@@ -79,11 +106,12 @@ def test_message_style_follows_active_palette():
         block = block.next()
     assert formats["Título"].foreground().color().name() == "#0b1f33"
     assert formats["código"].foreground().color().name() == "#102a43"
-    assert formats["código"].background().color().name() == "#eef4ff"
+    assert formats["código"].background().style() == Qt.BrushStyle.NoBrush
     assert formats["link"].foreground().color().name() == "#0055ff"
     chip = formats["a.py"]
     assert chip.foreground().color().name() == "#102a43"
-    assert chip.background().color().name() == "#eef4ff"
+    assert chip.background().style() == Qt.BrushStyle.NoBrush
+    assert [item["kind"] for item in message_chip_ranges(document)] == ["code", "file"]
 
 
 def test_bridge_styles_messages_with_active_theme_palette(tmp_path):
@@ -160,6 +188,14 @@ def find_items(item, name):
     return result
 
 
+def wait_until(predicate, timeout_ms=3000):
+    for _ in range(max(1, timeout_ms // 10)):
+        if predicate():
+            return True
+        QTest.qWait(10)
+    return bool(predicate())
+
+
 def test_streaming_preserves_blocks_scroll_copy_and_theme(tmp_path):
     app = QApplication.instance() or QApplication([])
     settings = MarySettings(app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "legacy")
@@ -173,7 +209,7 @@ def test_streaming_preserves_blocks_scroll_copy_and_theme(tmp_path):
     studio = StudioBridge(settings, db, prefs)
     window = None
     try:
-        with patch.object(chat, "refreshModels"):
+        with patch.object(chat, "refreshModels"), patch.object(chat, "refreshUsageLimits", lambda *a, **k: None):
             engine = create_engine(frontend, chat, studio)
             assert engine.rootObjects(), [x.toString() for x in engine._qml_warnings]
             window = engine.rootObjects()[0]
@@ -292,7 +328,7 @@ def test_chat_opens_file_reference_in_files_surface(tmp_path):
     studio = StudioBridge(settings, db, prefs)
     window = None
     try:
-        with patch.object(chat, "refreshModels"):
+        with patch.object(chat, "refreshModels"), patch.object(chat, "refreshUsageLimits", lambda *a, **k: None):
             engine = create_engine(frontend, chat, studio)
             assert engine.rootObjects(), [x.toString() for x in engine._qml_warnings]
             window = engine.rootObjects()[0]
@@ -315,6 +351,511 @@ def test_chat_opens_file_reference_in_files_surface(tmp_path):
             assert page.property("surfaceFilePath") == str(target.resolve())
             assert page.property("surfaceFileLine") == 2
             assert page.property("surfaceFilePreview") == "linha um\nlinha dois\nlinha tres"
+            assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
+    finally:
+        if window:
+            window.close()
+        studio.close()
+        chat.close()
+
+
+def test_open_decompiled_reference_resolves_and_emits_from_worker(tmp_path):
+    QApplication.instance() or QApplication([])
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "legacy")
+    prefs = QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+    chat = ChatBridge(settings, db, prefs)
+    received = []
+    delivery_threads = []
+    calls = []
+    qt_thread = threading.get_ident()
+
+    def receive(payload):
+        received.append(dict(payload))
+        delivery_threads.append(threading.get_ident())
+
+    chat.decompiledSourcePreviewRequested.connect(receive)
+
+    def resolve(reference, **kwargs):
+        calls.append((reference, kwargs, threading.get_ident(), threading.current_thread().name))
+        return {
+            "state": "ready",
+            "reference": reference,
+            "release_id": kwargs["release_id"],
+            "title": "NotaSaidaFiscalService",
+            "clean_target_line": 42,
+        }
+
+    try:
+        with patch(
+            "vrsoft_extractor.mary.frontend.bridges.codepreview.JavaCodeIndex.resolve_decompiled_reference",
+            side_effect=resolve,
+        ):
+            chat.openDecompiledReference(
+                "vr-code:NotaSaidaFiscalService.calcularImpostoItem"
+            )
+            assert received[0]["state"] == "loading"
+            assert wait_until(lambda: len(received) == 2)
+
+        assert [payload["state"] for payload in received] == ["loading", "ready"]
+        assert delivery_threads == [qt_thread, qt_thread]
+        assert type(calls[0][0]) is str
+        assert calls[0][0] == "NotaSaidaFiscalService.calcularImpostoItem"
+        assert calls[0][1] == {"release_id": received[0]["release_id"]}
+        assert calls[0][2] != qt_thread
+        assert calls[0][3] == "vr-code-preview"
+    finally:
+        chat.close()
+
+
+def test_open_decompiled_reference_discards_superseded_request(tmp_path):
+    QApplication.instance() or QApplication([])
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "legacy")
+    prefs = QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+    chat = ChatBridge(settings, db, prefs)
+    received = []
+    first_started = threading.Event()
+    release_first = threading.Event()
+    chat.decompiledSourcePreviewRequested.connect(
+        lambda payload: received.append(dict(payload))
+    )
+
+    def resolve(reference, **kwargs):
+        if str(reference).startswith("First"):
+            first_started.set()
+            release_first.wait(2.0)
+        return {"state": "ready", "reference": reference, "title": str(reference)}
+
+    try:
+        with patch(
+            "vrsoft_extractor.mary.frontend.bridges.codepreview.JavaCodeIndex.resolve_decompiled_reference",
+            side_effect=resolve,
+        ):
+            chat.openDecompiledReference("vr-code:First.method")
+            assert first_started.wait(1.0)
+            chat.openDecompiledReference("vr-code:Second.method")
+            release_first.set()
+            assert wait_until(
+                lambda: any(
+                    payload["state"] == "ready" and payload["title"] == "Second.method"
+                    for payload in received
+                )
+            )
+            QTest.qWait(100)
+
+        assert [payload["state"] for payload in received[:2]] == [
+            "loading",
+            "loading",
+        ]
+        assert [
+            payload["title"]
+            for payload in received
+            if payload["state"] == "ready"
+        ] == ["Second.method"]
+    finally:
+        release_first.set()
+        chat.close()
+
+
+def test_open_decompiled_reference_close_discards_late_result(tmp_path):
+    QApplication.instance() or QApplication([])
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "legacy")
+    prefs = QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+    chat = ChatBridge(settings, db, prefs)
+    received = []
+    entered = threading.Event()
+    release_worker = threading.Event()
+    closed = False
+    chat.decompiledSourcePreviewRequested.connect(
+        lambda payload: received.append(dict(payload))
+    )
+
+    def resolve(reference, **kwargs):
+        entered.set()
+        release_worker.wait(2.0)
+        return {"state": "ready", "reference": reference, "title": "Late"}
+
+    try:
+        with patch(
+            "vrsoft_extractor.mary.frontend.bridges.codepreview.JavaCodeIndex.resolve_decompiled_reference",
+            side_effect=resolve,
+        ):
+            chat.openDecompiledReference("vr-code:Late.method")
+            assert entered.wait(1.0)
+            chat.close()
+            closed = True
+            release_worker.set()
+            QTest.qWait(150)
+
+        assert [payload["state"] for payload in received] == ["loading"]
+    finally:
+        release_worker.set()
+        if not closed:
+            chat.close()
+
+
+def test_open_decompiled_reference_rejects_invalid_uri_and_raw_reference(tmp_path):
+    QApplication.instance() or QApplication([])
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "legacy")
+    prefs = QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+    chat = ChatBridge(settings, db, prefs)
+    received = []
+    chat.decompiledSourcePreviewRequested.connect(
+        lambda payload: received.append(dict(payload))
+    )
+
+    try:
+        with patch(
+            "vrsoft_extractor.mary.frontend.bridges.codepreview.JavaCodeIndex.resolve_decompiled_reference"
+        ) as resolver:
+            chat.openDecompiledReference("NotaSaidaFiscalService.calcularImpostoItem")
+            chat.openDecompiledReference("vr-code:invalid%20reference")
+            QTest.qWait(100)
+
+        resolver.assert_not_called()
+        assert received == []
+    finally:
+        chat.close()
+
+
+def test_open_decompiled_reference_handles_unexpected_error(tmp_path):
+    QApplication.instance() or QApplication([])
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "legacy")
+    prefs = QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+    chat = ChatBridge(settings, db, prefs)
+    received = []
+    chat.decompiledSourcePreviewRequested.connect(
+        lambda payload: received.append(dict(payload))
+    )
+
+    try:
+        with patch(
+            "vrsoft_extractor.mary.frontend.bridges.codepreview.JavaCodeIndex.resolve_decompiled_reference",
+            side_effect=RuntimeError("Index crash"),
+        ):
+            chat.openDecompiledReference("vr-code:Broken.method")
+            assert wait_until(lambda: len(received) == 2)
+
+        assert [payload["state"] for payload in received] == ["loading", "error"]
+        assert received[1]["reference"] == "Broken.method"
+        assert received[1]["release_id"] == received[0]["release_id"]
+        assert "Index crash" in received[1]["message"]
+    finally:
+        chat.close()
+
+
+def test_chat_opens_decompiled_code_surface(tmp_path):
+    QApplication.instance() or QApplication([])
+    (tmp_path / "VRProject").mkdir(parents=True, exist_ok=True)
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "legacy")
+    prefs = QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+    cid = db.create_conversation("Chat", "codex", "gpt-5.6", settings.root)
+    db.add_message(cid, "assistant", "Veja `NotaSaidaFiscalService.calcularImpostoItem`.")
+    frontend = FrontendBridge(settings, prefs, theme_override="dark_orange", initial_page="Chat VR")
+    chat = ChatBridge(settings, db, prefs)
+    studio = StudioBridge(settings, db, prefs)
+    window = None
+    clean_lines = ["class NotaSaidaFiscalService {"]
+    clean_lines.extend(f"    private int field{index};" for index in range(1, 41))
+    clean_lines.append("}")
+    clean_lines.insert(29, "    public void calcularImpostoItem() {")
+    clean_body = "\n".join(clean_lines)
+    raw_body = "class NotaSaidaFiscalService {\n" + "\n".join(
+        f"    private int rawField{index};" for index in range(1, 46)
+    ) + "\n}"
+    fake_payload = {
+        "state": "ready",
+        "reference": "NotaSaidaFiscalService.calcularImpostoItem",
+        "release_id": "r1",
+        "title": "NotaSaidaFiscalService",
+        "qualified_name": "br.com.vrsoft.fiscal.NotaSaidaFiscalService",
+        "jar_relative_path": "lib/nota-fiscal.jar",
+        "target_symbol": "calcularImpostoItem",
+        "overload_count": 1,
+        "raw_target_line": 35,
+        "clean_target_line": 30,
+        "clean_available": True,
+        "clean_status": "cleaned",
+        "truncated": True,
+        "body": raw_body,
+        "clean_body": clean_body,
+    }
+    received = []
+    chat.decompiledSourcePreviewRequested.connect(
+        lambda payload: received.append(dict(payload))
+    )
+    try:
+        with patch.object(chat, "refreshModels"), patch.object(chat, "refreshUsageLimits", lambda *a, **k: None), patch(
+            "vrsoft_extractor.mary.frontend.bridges.codepreview.JavaCodeIndex.resolve_decompiled_reference",
+            return_value=fake_payload,
+        ):
+            engine = create_engine(frontend, chat, studio)
+            assert engine.rootObjects(), [x.toString() for x in engine._qml_warnings]
+            window = engine.rootObjects()[0]
+            window.setWidth(1366)
+            window.setHeight(768)
+            QTest.qWait(250)
+            displays = [
+                str(chat.messages.item(index).get("displayContent") or "")
+                for index in range(chat.messages.rowCount())
+            ]
+            assert any(
+                "vr-code:NotaSaidaFiscalService.calcularImpostoItem" in display
+                for display in displays
+            )
+            page = window.findChild(QObject, "chatPage")
+            chat.openDecompiledReference(
+                "vr-code:NotaSaidaFiscalService.calcularImpostoItem"
+            )
+            assert wait_until(
+                lambda: sum(item["state"] == "ready" for item in received) == 1
+            )
+            chat.openDecompiledReference(
+                "vr-code:NotaSaidaFiscalService.calcularImpostoItem"
+            )
+            assert wait_until(
+                lambda: sum(item["state"] == "ready" for item in received) == 2
+            )
+            QTest.qWait(150)
+
+            assert page.property("surfaceVisible")
+            assert page.property("surfaceIndex") == 6
+            tabs = page.property("openSurfaceTabs")
+            tabs = tabs.toVariant() if hasattr(tabs, "toVariant") else tabs
+            assert sum(int(tab["page"]) == 6 for tab in tabs) == 1
+            source_viewer = window.findChild(QObject, "decompiledSourceViewer")
+            source_viewport = window.findChild(QObject, "decompiledSourceViewport")
+            source_body = window.findChild(QObject, "decompiledSourceBody")
+            assert source_viewer is not None
+            assert source_viewport is not None
+            assert source_body is not None
+            assert source_viewer.property("code") == clean_body
+            assert source_viewer.property("targetLine") == 30
+            assert source_viewer.property("language") == "java"
+            assert source_body.property("text") == clean_body
+
+            clean_button = window.findChild(QObject, "decompiledCodeCleanModeButton")
+            raw_button = window.findChild(QObject, "decompiledCodeRawModeButton")
+            copy_button = window.findChild(QObject, "copyDecompiledCodeButton")
+            assert clean_button is not None
+            assert raw_button is not None
+            assert copy_button is not None
+            assert clean_button.property("enabled")
+
+            raw_button.click()
+            QTest.qWait(100)
+            assert not page.property("decompiledCodeCleanMode")
+            assert source_viewer.property("code") == raw_body
+            assert source_viewer.property("targetLine") == 35
+            copy_button.click()
+            QTest.qWait(50)
+            assert QApplication.instance().clipboard().text() == raw_body
+
+            clean_button.click()
+            QTest.qWait(100)
+            assert page.property("decompiledCodeCleanMode")
+            assert source_viewer.property("code") == clean_body
+            assert source_viewer.property("targetLine") == 30
+            copy_button.click()
+            QTest.qWait(50)
+            assert QApplication.instance().clipboard().text() == clean_body
+
+            source_body.select(0, 5)
+            selected_text = source_body.property("selectedText")
+            cursor_position = source_body.property("cursorPosition")
+            assert selected_text
+            QMetaObject.invokeMethod(source_viewer, "revealLine")
+            QTest.qWait(100)
+            assert source_body.property("selectedText") == selected_text
+            assert source_body.property("cursorPosition") == cursor_position
+            assert source_viewport.property("contentY") > 0
+
+            for removed_name in (
+                "decompiledSurfaceView",
+                "decompiledCodeScroll",
+                "decompiledCodeBody",
+                "decompiledStatusNotice",
+                "decompiledAmbiguousList",
+                "lineGutter",
+                "gutterText",
+            ):
+                assert find_items(window.contentItem(), removed_name) == []
+            assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
+    finally:
+        if window:
+            window.close()
+        studio.close()
+        chat.close()
+
+
+def test_chat_decompiled_surface_not_found(tmp_path):
+    QApplication.instance() or QApplication([])
+    (tmp_path / "VRProject").mkdir(parents=True, exist_ok=True)
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "legacy")
+    prefs = QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+    frontend = FrontendBridge(settings, prefs, theme_override="dark_orange", initial_page="Chat VR")
+    chat = ChatBridge(settings, db, prefs)
+    studio = StudioBridge(settings, db, prefs)
+    window = None
+    fake_payload = {
+        "state": "not_found",
+        "reference": "UnknownClass.method",
+        "message": "Classe ou método não encontrado na release ativa.",
+    }
+    try:
+        with patch.object(chat, "refreshModels"), patch.object(chat, "refreshUsageLimits", lambda *a, **k: None), patch("vrsoft_extractor.mary.frontend.bridges.codepreview.JavaCodeIndex.resolve_decompiled_reference", return_value=fake_payload):
+            engine = create_engine(frontend, chat, studio)
+            assert engine.rootObjects(), [x.toString() for x in engine._qml_warnings]
+            window = engine.rootObjects()[0]
+            window.setWidth(1366)
+            window.setHeight(768)
+            QTest.qWait(250)
+            page = window.findChild(QObject, "chatPage")
+            chat.openDecompiledReference("vr-code:UnknownClass.method")
+            assert wait_until(
+                lambda: page.property("surfaceIndex") == 6
+                and window.findChild(QObject, "decompiledCodeStatusMessage") is not None
+                and "não encontrado"
+                in window.findChild(QObject, "decompiledCodeStatusMessage").property("text")
+            )
+            assert page.property("surfaceVisible")
+            assert page.property("surfaceIndex") == 6
+            status_notice = window.findChild(QObject, "decompiledCodeStatusMessage")
+            assert "não encontrado" in status_notice.property("text")
+            assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
+    finally:
+        if window:
+            window.close()
+        studio.close()
+        chat.close()
+
+
+def test_chat_decompiled_surface_ambiguous(tmp_path):
+    QApplication.instance() or QApplication([])
+    (tmp_path / "VRProject").mkdir(parents=True, exist_ok=True)
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "legacy")
+    prefs = QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+    frontend = FrontendBridge(settings, prefs, theme_override="dark_orange", initial_page="Chat VR")
+    chat = ChatBridge(settings, db, prefs)
+    studio = StudioBridge(settings, db, prefs)
+    window = None
+    fake_payload = {
+        "state": "ambiguous",
+        "reference": "CommonService.execute",
+        "message": "Múltiplas classes encontradas.",
+        "candidates": [
+            {
+                "qualified_name": f"br.com.vr.pkg{index}.CommonService",
+                "jar_relative_path": f"lib/common-{index}.jar",
+            }
+            for index in range(22)
+        ],
+    }
+    try:
+        with patch.object(chat, "refreshModels"), patch.object(chat, "refreshUsageLimits", lambda *a, **k: None), patch("vrsoft_extractor.mary.frontend.bridges.codepreview.JavaCodeIndex.resolve_decompiled_reference", return_value=fake_payload):
+            engine = create_engine(frontend, chat, studio)
+            assert engine.rootObjects(), [x.toString() for x in engine._qml_warnings]
+            window = engine.rootObjects()[0]
+            window.setWidth(1366)
+            window.setHeight(768)
+            QTest.qWait(250)
+            page = window.findChild(QObject, "chatPage")
+            chat.openDecompiledReference("vr-code:CommonService.execute")
+            assert wait_until(
+                lambda: window.findChild(QObject, "decompiledCodeCandidateList") is not None
+                and window.findChild(
+                    QObject, "decompiledCodeCandidateList"
+                ).property("count") == 20
+            )
+            assert page.property("surfaceVisible")
+            assert page.property("surfaceIndex") == 6
+            assert "Múltiplas" in window.findChild(
+                QObject, "decompiledCodeAmbiguousMessage"
+            ).property("text")
+            assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
+    finally:
+        if window:
+            window.close()
+        studio.close()
+        chat.close()
+
+
+def test_vr_shimmer_text_fluid_properties():
+    import re
+    from PySide6.QtCore import QUrl
+    from PySide6.QtQuick import QQuickView
+
+    app = QApplication.instance() or QApplication([])
+    assert app is not None
+    view = QQuickView()
+    view.setSource(QUrl.fromLocalFile("vrsoft_extractor/mary/frontend/qml/components/VrShimmerText.qml"))
+    item = view.rootObject()
+    assert item is not None
+    item.setProperty("text", "Trabalhando há 5s")
+    item.setProperty("running", True)
+
+    # Boundaries (-0.4 and 1.4) must match resting color without popping
+    item.setProperty("phase", -0.4)
+    markup_left = item.shimmerMarkup("Trabalhando há 5s")
+    item.setProperty("phase", 1.4)
+    markup_right = item.shimmerMarkup("Trabalhando há 5s")
+    assert markup_left == markup_right
+
+    # Mid phase must provide smooth highlight
+    item.setProperty("phase", 0.5)
+    markup_mid = item.shimmerMarkup("Trabalhando há 5s")
+    colors_mid = re.findall(r'<font color="#([0-9a-f]{6})">', markup_mid)
+    colors_rest = re.findall(r'<font color="#([0-9a-f]{6})">', markup_left)
+    assert any(c != colors_rest[0] for c in colors_mid)
+
+    # Empty string handling
+    assert item.shimmerMarkup("") == ""
+
+    # Non-running state turns off shimmering
+    item.setProperty("running", False)
+    assert not item.property("shimmering")
+
+
+def test_inline_code_chips_paint_t3_surface_and_border(tmp_path):
+    QApplication.instance() or QApplication([])
+    settings = MarySettings(app_dir=tmp_path, root=tmp_path / "VRProject", old_root=tmp_path / "legacy")
+    prefs = QSettings(str(tmp_path / "ui.ini"), QSettings.IniFormat)
+    db = MaryDatabase(settings.database_path, root=settings.root, backup_portable_migration=False)
+    cid = db.create_conversation("Chips", "codex", "gpt-5.6", settings.root)
+    db.add_message(cid, "assistant", "Em `setItensNota` e `mary/frontend/file_links.py:12`.")
+    frontend = FrontendBridge(settings, prefs, theme_override="ocean", initial_page="Chat VR")
+    chat = ChatBridge(settings, db, prefs)
+    studio = StudioBridge(settings, db, prefs)
+    window = None
+    try:
+        with patch.object(chat, "refreshModels"), patch.object(chat, "refreshUsageLimits", lambda *a, **k: None):
+            engine = create_engine(frontend, chat, studio)
+            assert engine.rootObjects(), [x.toString() for x in engine._qml_warnings]
+            window = engine.rootObjects()[0]
+            window.setWidth(1366)
+            window.setHeight(768)
+            content = window.contentItem()
+            assert wait_until(lambda: len(find_items(content, "inlineChip")) == 2)
+            chips = find_items(content, "inlineChip")
+            assert all(chip.property("radius") > 0 for chip in chips)
+            assert all(chip.property("width") > 0 and chip.property("height") > 0 for chip in chips)
+            # T3 `.chat-markdown :not(pre)>code`: muted fill + hairline border.
+            assert {chip.property("color").name() for chip in chips} == {"#233544"}
+            layer = find_items(content, "inlineChipLayer")[0]
+            assert layer.property("fillColor").name() == "#233544"
+            assert layer.property("borderColor").name() == "#405567"
+            assert layer.property("chipBorderWidth") == 1
+            body = find_items(content, "messageBody")[0]
+            assert body.property("paintedHeight") > 0
+            body.selectAll()
+            assert "setItensNota" in body.property("selectedText")
             assert not engine._qml_warnings, [x.toString() for x in engine._qml_warnings]
     finally:
         if window:

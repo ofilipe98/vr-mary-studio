@@ -51,27 +51,27 @@ Item {
                             text: modelData.name
                             color: frontend.palette.text
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(16)
+                            font.pixelSize: Theme.fontSizeBody
                             font.weight: Font.DemiBold
                         }
                         Text {
                             text: modelData.description
                             color: frontend.palette.mutedText
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(13)
+                            font.pixelSize: Theme.fontSizeControl
                         }
                         Text {
                             text: modelData.count
                             color: frontend.palette.text
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(29)
+                            font.pixelSize: Theme.fontSizeDisplay
                             font.weight: Font.DemiBold
                         }
                         Text {
                             text: modelData.status
                             color: modelData.good ? frontend.palette.success : frontend.palette.warning
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(13)
+                            font.pixelSize: Theme.fontSizeControl
                             font.weight: Font.DemiBold
                         }
                         Text {
@@ -80,7 +80,7 @@ Item {
                             text: modelData.detail
                             color: frontend.palette.mutedText
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(12)
+                            font.pixelSize: Theme.fontSizeCaption
                             wrapMode: Text.WordWrap
                         }
                         VrButton {
@@ -109,19 +109,18 @@ Item {
             text: "Resumo VR"
             color: frontend.palette.text
             font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSize(15)
+            font.pixelSize: Theme.fontSizeControl
             font.weight: Font.DemiBold
         }
 
         GridLayout {
             Layout.fillWidth: true
-            columns: width < Theme.scaledGeometry(480) ? 2 : 4
+            columns: width < Theme.scaledGeometry(480) ? 2 : 3
             columnSpacing: Theme.scaledGeometry(6)
             Repeater {
                 model: [
                     { label: "Documentos", value: studio.dashboardMetrics.documents || "0" },
                     { label: "Pendentes", value: studio.dashboardMetrics.reviews || "0" },
-                    { label: "OCR", value: studio.dashboardMetrics.ocr || "0" },
                     { label: "Conversas", value: studio.dashboardMetrics.conversations || "0" }
                 ]
                 delegate: Rectangle {
@@ -133,7 +132,7 @@ Item {
                         anchors.fill: parent
                         anchors.margins: Theme.scaledGeometry(10)
                         spacing: Theme.scaledGeometry(6)
-                        Text { text: modelData.label; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+                        Text { text: modelData.label; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
                         Text { text: modelData.value; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(26); font.weight: Font.DemiBold }
                     }
                 }

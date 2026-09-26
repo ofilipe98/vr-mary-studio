@@ -14,6 +14,16 @@ Rectangle {
     property bool hasDiff: false
     property bool filesExpanded: false
     property bool diffExpanded: false
+    // Disclosure state is owned by VrChatActivity (keyed by item id) so a
+    // streamed activityData update cannot silently reset an expanded card.
+    property alias disclosureExpanded: root.filesExpanded
+    property var disclosureHost: null
+    signal disclosureToggled(bool expanded)
+
+    function toggleDisclosure() {
+        root.filesExpanded = !root.filesExpanded
+        root.disclosureToggled(root.filesExpanded)
+    }
 
     readonly property var visibleFiles: filesExpanded
         ? files : files.slice(0, Math.min(4, files.length))
@@ -109,7 +119,7 @@ Rectangle {
             }
 
             TapHandler {
-                onTapped: root.filesExpanded = !root.filesExpanded
+                onTapped: root.toggleDisclosure()
             }
         }
 
@@ -178,7 +188,7 @@ Rectangle {
             renderType: Theme.textRenderType
 
             HoverHandler { id: showFilesHover; cursorShape: Qt.PointingHandCursor }
-            TapHandler { onTapped: root.filesExpanded = !root.filesExpanded }
+            TapHandler { onTapped: root.toggleDisclosure() }
         }
 
         ColumnLayout {

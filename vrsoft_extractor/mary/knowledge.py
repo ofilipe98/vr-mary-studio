@@ -69,14 +69,11 @@ TROUBLESHOOTING_MARKERS = (
 def split_knowledge_document(
     title: str,
     markdown: str,
-    ocr_text: str = "",
     *,
     source: str = "",
 ) -> list[KnowledgeChunk]:
     """Split one source document into stable, independently searchable chunks."""
     body = _strip_frontmatter(str(markdown or "")).strip()
-    if ocr_text.strip():
-        body = (body + "\n\n## Texto extraído das imagens\n\n" + ocr_text.strip()).strip()
     if not body:
         return []
     sections = _markdown_sections(title, body)

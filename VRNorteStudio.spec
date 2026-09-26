@@ -36,8 +36,6 @@ a = Analysis(
     ],
     hiddenimports=(playwright_hidden + spellchecker_hidden + tree_sitter_hidden
                    + tree_sitter_java_hidden + semantic_hidden + [
-        "pytesseract",
-        "PIL.Image",
         "bs4",
         "markdownify",
     ]),

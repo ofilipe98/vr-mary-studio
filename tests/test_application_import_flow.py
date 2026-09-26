@@ -271,6 +271,8 @@ def test_scenario_11_progress_events_keep_running_state(bridge):
     assert bridge.releaseSnapshotRunning is True
     assert bridge._release_snapshot_poll_timer.isActive()
     assert "Copiando JARs — 5/10 · test.jar" in bridge.releaseSnapshotStatus
+    # The import preview bar reads the same real current/total.
+    assert bridge.releaseSnapshotProgress == 50.0
 
 
 # Scenario 12
@@ -910,4 +912,215 @@ def test_scenario_28_single_jar_cases(tmp_path):
     catalog2 = ErpReleaseCatalog(tmp_path / "ws2", expected_jar_count=1)
     with pytest.raises(ErpReleaseError, match="SHA-256 divergente"):
         catalog2.snapshot_detected_release(str(jar), release_id="single-tamper", known_hashes=known2)
+
+
+@pytest.mark.qml
+def test_package_import_publishes_ultra_choice_after_catalog_loads(bridge, tmp_path):
+    source = tmp_path / "package"
+    source.mkdir()
+    _vr_jar(source / "vrmaster.jar", (1, 0, 0, 0))
+    _vr_jar(source / "vrpdv.jar", (2, 0, 0, 0))
+
+    assert bridge.previewApplicationImport(str(source), False, "") is True
+    _wait_preview_ready(bridge)
+    assert bridge.applicationImportPreview.get("state") == "ready"
+    assert bridge.pendingImportedPackageForUltra == {}
+
+    assert bridge.confirmApplicationImport() is True
+    _wait_snapshot_idle(bridge)
+    wait_until(lambda: bridge._apps_catalog_thread is None)
+    QApplication.processEvents()
+
+    pending = bridge.pendingImportedPackageForUltra
+    assert pending["packageId"] == bridge._pending_ultra_package_choice_id
+    assert pending["packageName"]
+    assert pending["applicationCount"] == 2
+    assert any(
+        item.get("package_id") == pending["packageId"]
+        for item in bridge.packagesCatalog
+    )
+
+
+@pytest.mark.qml
+def test_new_package_import_clears_previous_ultra_choice_error(bridge, tmp_path):
+    source = tmp_path / "package"
+    source.mkdir()
+    _vr_jar(source / "vrmaster.jar", (1, 0, 0, 0))
+    _vr_jar(source / "vrpdv.jar", (2, 0, 0, 0))
+
+    assert bridge.previewApplicationImport(str(source), False, "") is True
+    _wait_preview_ready(bridge)
+    assert bridge.applicationImportPreview.get("state") == "ready"
+
+    bridge._pending_ultra_package_choice_error = (
+        "O pacote importado não possui composição válida para usar no Ultra."
+    )
+
+    assert bridge.confirmApplicationImport() is True
+    _wait_snapshot_idle(bridge)
+    wait_until(lambda: bridge._apps_catalog_thread is None)
+    QApplication.processEvents()
+
+    pending = bridge.pendingImportedPackageForUltra
+    assert pending["packageId"] == bridge._pending_ultra_package_choice_id
+    assert pending["packageId"]
+    assert pending["applicationCount"] == 2
+    assert pending["error"] == ""
+
+
+@pytest.mark.qml
+def test_pending_ultra_choice_is_hidden_until_catalog_has_package(bridge):
+    bridge._pending_ultra_package_choice_id = "one"
+    bridge._apps_catalog_data = {}
+    assert bridge.pendingImportedPackageForUltra == {}
+
+
+@pytest.mark.qml
+def test_single_jar_import_does_not_publish_ultra_choice(bridge, tmp_path):
+    jar = tmp_path / "single.jar"
+    _vr_jar(jar, (1, 0, 0, 0))
+
+    assert bridge.previewApplicationImport(str(jar), True, "") is True
+    _wait_preview_ready(bridge)
+    assert bridge.confirmApplicationImport() is True
+    _wait_snapshot_idle(bridge)
+    wait_until(lambda: bridge._apps_catalog_thread is None)
+    QApplication.processEvents()
+    assert bridge._pending_ultra_package_choice_id == ""
+    assert bridge.pendingImportedPackageForUltra == {}
+
+
+@pytest.mark.qml
+def test_failed_package_snapshot_does_not_publish_ultra_choice(bridge, tmp_path):
+    source = tmp_path / "source_changed"
+    source.mkdir()
+    _vr_jar(source / "vrmaster.jar", (1, 0, 0, 0))
+
+    assert bridge.previewApplicationImport(str(source), False, "") is True
+    _wait_preview_ready(bridge)
+    assert bridge.applicationImportPreview.get("state") == "ready"
+
+    _vr_jar(source / "vrpdv.jar", (2, 0, 0, 0))
+    assert bridge.confirmApplicationImport() is True
+    _wait_snapshot_idle(bridge)
+    wait_until(lambda: bridge._apps_catalog_thread is None)
+    QApplication.processEvents()
+    assert "mudaram após a prévia" in bridge.releaseSnapshotStatus
+    assert bridge._pending_ultra_package_choice_id == ""
+    assert bridge.pendingImportedPackageForUltra == {}
+
+
+@pytest.mark.qml
+def test_dismiss_ultra_choice_clears_question_without_touching_contexts(bridge):
+    bridge._ultra_application_contexts = [{
+        "app_id": "vrapp",
+        "version": "1.0.0",
+        "variant_id": "sha-app",
+        "package_id": "one",
+    }]
+    bridge._CodeAdmin_domain._save_application_contexts()
+    bridge._apps_catalog_data = {
+        "data": {
+            "applications": {},
+            "packages": {
+                "one": {
+                    "package_id": "one",
+                    "name": "Pacote A",
+                    "composition": [
+                        {"app_id": "vrapp", "version": "1.0.0", "variant_id": "sha-app"},
+                        {"app_id": "vrdep", "version": "2.0.0", "variant_id": "sha-dep"},
+                    ],
+                }
+            },
+        }
+    }
+    bridge._pending_ultra_package_choice_id = "one"
+    bridge.stateChanged.emit()
+    assert bridge.pendingImportedPackageForUltra["packageId"] == "one"
+    assert bridge.pendingImportedPackageForUltra["packageName"] == "Pacote A"
+    assert bridge.pendingImportedPackageForUltra["applicationCount"] == 2
+    before = bridge.ultraApplicationContexts
+
+    bridge.dismissImportedPackageUltraChoice("one")
+    assert bridge.pendingImportedPackageForUltra == {}
+    assert bridge.ultraApplicationContexts == before
+    assert not bridge.codeAnalysisEnabled
+
+
+@pytest.mark.qml
+def test_ultra_choice_counts_full_composition_and_rejects_invalid_items(bridge):
+    bridge._ultra_application_contexts = [{
+        "app_id": "vrapp",
+        "version": "1.0.0",
+        "variant_id": "sha-app",
+        "package_id": "one",
+    }]
+    bridge._CodeAdmin_domain._save_application_contexts()
+    bridge._apps_catalog_data = {
+        "data": {
+            "applications": {},
+            "packages": {
+                "one": {
+                    "package_id": "one",
+                    "name": "Pacote Misto",
+                    "composition": [
+                        {"app_id": "vrapp", "version": "1.0.0", "variant_id": "sha-app"},
+                        {"app_id": "vrdep", "version": "2.0.0"},
+                    ],
+                }
+            },
+        }
+    }
+    bridge._pending_ultra_package_choice_id = "one"
+    bridge.stateChanged.emit()
+    assert bridge.pendingImportedPackageForUltra["applicationCount"] == 2
+    before = [dict(item) for item in bridge._ultra_application_contexts]
+
+    assert bridge.useImportedPackageInUltra("one") is False
+    assert bridge._ultra_application_contexts == before
+    assert bridge._pending_ultra_package_choice_id == "one"
+    assert bridge.pendingImportedPackageForUltra["packageId"] == "one"
+    assert bridge.pendingImportedPackageForUltra["applicationCount"] == 2
+    assert bridge.pendingImportedPackageForUltra["error"]
+    assert bridge._apps_catalog_error == ""
+
+
+@pytest.mark.qml
+def test_request_imported_package_reopens_ultra_choice(bridge):
+    bridge._apps_catalog_data = {
+        "data": {
+            "applications": {},
+            "packages": {
+                "one": {
+                    "package_id": "one",
+                    "name": "Pacote A",
+                    "composition": [
+                        {"app_id": "vrapp", "version": "1.0.0", "variant_id": "sha-app"},
+                        {"app_id": "vrdep", "version": "2.0.0", "variant_id": "sha-dep"},
+                    ],
+                }
+            },
+        }
+    }
+    bridge._pending_ultra_package_choice_id = ""
+    bridge._pending_ultra_package_choice_error = ""
+    before = [dict(item) for item in bridge._ultra_application_contexts]
+
+    assert bridge.requestImportedPackageForUltra("missing") is False
+    assert bridge.pendingImportedPackageForUltra == {}
+    assert bridge._pending_ultra_package_choice_id == ""
+
+    assert bridge.requestImportedPackageForUltra("one") is True
+    pending = bridge.pendingImportedPackageForUltra
+    assert pending["packageId"] == "one"
+    assert pending["packageName"] == "Pacote A"
+    assert pending["applicationCount"] == 2
+    assert pending["error"] == ""
+    assert bridge._ultra_application_contexts == before
+
+    assert bridge.useImportedPackageInUltra("one") is True
+    contexts = bridge._ultra_application_contexts
+    assert len(contexts) == 2
+    assert all(item["package_id"] == "one" for item in contexts)
+    assert bridge.pendingImportedPackageForUltra == {}
 

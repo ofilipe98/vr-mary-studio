@@ -20,6 +20,7 @@ from ..theme_manager import ThemeManager
 from .text_rendering import (
     CodeSyntaxHighlighter,
     apply_message_document_style,
+    message_chip_ranges,
     presentation_blocks,
     table_clipboard_text,
     table_row_edges,
@@ -625,6 +626,13 @@ class FrontendBridge(QObject):
         if quick_document is None:
             return []
         return table_row_edges(quick_document.textDocument())
+
+    @Slot(QObject, result="QVariantList")
+    def messageChipRanges(self, quick_document):
+        """Spans the QML chip layer repaints with the T3 rounded chip."""
+        if quick_document is None:
+            return []
+        return message_chip_ranges(quick_document.textDocument())
 
     @Slot(QObject, str)
     def styleMessageDocument(self, quick_document, markdown: str) -> None:

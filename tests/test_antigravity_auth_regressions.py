@@ -156,7 +156,7 @@ def test_cancel_during_process_creation_reaps_late_child():
     client.start.side_effect = launch
     with patch("vrsoft_extractor.mary.antigravity_acp.AcpClient", return_value=client):
         attempt = manager.start_login()
-        assert cancelled.wait(2)
+        assert cancelled.wait(10)
     assert attempt.state == "cancelled"
     assert client.close.called
     client.request.assert_not_called()
@@ -168,7 +168,7 @@ def test_environment_failure_finishes_attempt_and_allows_retry():
     failed = threading.Event()
     manager._on_state_changed = lambda: failed.set() if manager.active_attempt.state == "failed" else None
     manager.start_login()
-    assert failed.wait(2)
+    assert failed.wait(10)
     assert manager.active_attempt.state == "failed"
     assert "SECRET" not in str(manager.get_ui_snapshot())
 

@@ -11,7 +11,7 @@ ColumnLayout {
     Text {
         Layout.topMargin: Theme.scaledGeometry(4)
         text: root.title; color: Theme.palette.headingText
-        font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold
+        font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeControl; font.weight: Font.DemiBold
     }
     ColumnLayout { id: body; Layout.fillWidth: true; spacing: Theme.scaledGeometry(6) }
 }

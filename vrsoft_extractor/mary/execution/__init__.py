@@ -2,7 +2,7 @@
 Execution subsystem for VR Mary Studio.
 
 Provides non-Qt contracts and runners for parallel research fan-out,
-stage execution, response synthesis, budget enforcement, cancellation,
+stage execution, response synthesis, execution telemetry, cancellation,
 and structured persistence for safe resumption.
 """
 

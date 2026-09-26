@@ -7,7 +7,7 @@ ComboBox {
     id: control
     implicitWidth: Theme.scaledGeometry(160); implicitHeight: Math.max(28, font.pixelSize + 14)
     leftPadding: Theme.scaledGeometry(10); rightPadding: Theme.scaledGeometry(24)
-    font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13)
+    font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeControl
     background: Rectangle {
         radius: Theme.scaledGeometry(9)
         color: control.hovered ? Theme.palette.hover : Theme.palette.chatControl

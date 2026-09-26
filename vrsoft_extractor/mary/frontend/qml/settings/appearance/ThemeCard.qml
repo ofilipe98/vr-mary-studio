@@ -16,7 +16,7 @@ Rectangle {
     signal deleteRequested()
     objectName: "themeCard_" + themeId
     Layout.fillWidth: true; Layout.minimumWidth: 0
-    implicitHeight: 112 + Theme.fontSize(14); radius: Theme.scaledGeometry(14)
+    implicitHeight: 112 + Theme.fontSizeControl; radius: Theme.scaledGeometry(14)
     color: cardArea.containsMouse ? Theme.palette.hover : Theme.palette.background
     border.color: Theme.palette.border
     MouseArea {
@@ -47,7 +47,7 @@ Rectangle {
         anchors.margins: Theme.scaledGeometry(12); spacing: 2
         Text {
             text: root.themeName; color: Theme.palette.text
-            font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(14); font.weight: Font.DemiBold
+            font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeControl; font.weight: Font.DemiBold
             Layout.fillWidth: true; elide: Text.ElideRight
         }
         AppearanceAction { visible: !root.isBuiltIn; quiet: true; iconKind: "edit"; Accessible.name: "Editar tema"; onClicked: root.editRequested() }

@@ -20,9 +20,7 @@ from ...jvm_toolchain import JvmToolchain
 
 from ...decompiled_detection import (
     detect_decompiled_package_archive,
-    detect_decompiled_source,
     import_decompiled_package_archive,
-    import_decompiled_source,
 )
 from ...decompiled_export import export_decompiled_package, export_decompiled_source
 from .presentation import (ERP_JAR_SOURCE_VR_EXEC, ERP_JAR_SOURCE_WORKSPACE, ERP_JAR_SOURCE_CUSTOM, ERP_JAR_SCOPE_FULL_RELEASE, ERP_JAR_SCOPE_SINGLE, DEFAULT_ERP_JAR_SOURCE_PATH, EXPECTED_ERP_JAR_COUNT, CODE_PROCESSING_HARDWARE, CODE_PROCESSING_HEAP_OPTIONS, CODE_PROCESSING_TIMEOUT_OPTIONS, CODE_PROCESSING_CPU_CORE_OPTIONS, CODE_PROCESSING_DISK_MULTIPLIER_OPTIONS, CODE_PROCESSING_WINDOW_OPTIONS)
@@ -59,6 +57,7 @@ class CodeAdminDomain:
             self._code_analysis_enabled = False
             self._preferences.setValue("research/code_analysis_enabled", False)
             self._preferences.sync()
+            self._set_code_analysis_auto_enable_pending(False)
         self.stateChanged.emit()
 
     def addSelectedApplicationContext(self) -> bool:  # noqa: N802
@@ -72,21 +71,139 @@ class CodeAdminDomain:
         self._ultra_application_contexts = [item for item in self._ultra_application_contexts
                                              if item["app_id"] != selection["app_id"]] + [selection]
         self._save_application_contexts()
+        self._request_code_analysis_auto_enable()
         return True
 
     def removeApplicationContext(self, app_id: str) -> None:  # noqa: N802
         self._ultra_application_contexts = [item for item in self._ultra_application_contexts if item["app_id"] != app_id]
         self._save_application_contexts()
+        if self._ultra_application_contexts:
+            self._sync_code_analysis_auto_enable()
 
     def setCodeAnalysisEnabled(self, enabled: bool) -> None:  # noqa: N802
+        if not enabled:
+            self._set_code_analysis_auto_enable_pending(False)
         self._code_analysis_enabled = bool(
             enabled
             and self.ultraApplicationContextsReady
         )
+        if self._code_analysis_enabled:
+            self._set_code_analysis_auto_enable_pending(False)
         self._preferences.setValue(
             "research/code_analysis_enabled", self._code_analysis_enabled
         )
         self._preferences.sync()
+        self.stateChanged.emit()
+
+    def pending_imported_package_for_ultra(self) -> dict[str, Any]:
+        package_id = str(self._pending_ultra_package_choice_id or "").strip()
+        if not package_id:
+            return {}
+        packages = self._apps_catalog_data.get("data", {}).get("packages", {})
+        package = packages.get(package_id) if isinstance(packages, dict) else None
+        if not isinstance(package, dict):
+            return {}
+        composition = package.get("composition")
+        return {
+            "packageId": package_id,
+            "packageName": str(package.get("name") or package_id),
+            "applicationCount": len(composition) if isinstance(composition, list) else 0,
+            "error": str(self._pending_ultra_package_choice_error or ""),
+        }
+
+    def requestImportedPackageForUltra(self, package_id: str) -> bool:  # noqa: N802
+        selected = str(package_id or "").strip()
+        packages = self._apps_catalog_data.get("data", {}).get("packages", {})
+        package = packages.get(selected) if isinstance(packages, dict) else None
+        if not selected or not isinstance(package, dict):
+            return False
+        self._pending_ultra_package_choice_id = selected
+        self._pending_ultra_package_choice_error = ""
+        self.stateChanged.emit()
+        return True
+
+    def useImportedPackageInUltra(self, package_id: str) -> bool:  # noqa: N802
+        selected = str(package_id or "").strip()
+        if not selected or selected != str(self._pending_ultra_package_choice_id or ""):
+            return False
+        packages = self._apps_catalog_data.get("data", {}).get("packages", {})
+        package = packages.get(selected) if isinstance(packages, dict) else None
+        contexts: list[dict[str, Any]] = []
+        composition = package.get("composition") if isinstance(package, dict) else None
+        if isinstance(composition, list):
+            for item in composition:
+                if not isinstance(item, dict):
+                    contexts = []
+                    break
+                app_id = str(item.get("app_id") or "")
+                version = str(item.get("version") or "")
+                variant_id = str(item.get("variant_id") or "")
+                if not (app_id and version and variant_id):
+                    contexts = []
+                    break
+                contexts.append({
+                    "app_id": app_id,
+                    "version": version,
+                    "variant_id": variant_id,
+                    "package_id": selected,
+                })
+        if not contexts:
+            self._pending_ultra_package_choice_error = (
+                "O pacote importado não possui composição válida para usar no Ultra."
+            )
+            self.stateChanged.emit()
+            return False
+        self._pending_ultra_package_choice_error = ""
+        self._ultra_application_contexts = contexts
+        self._pending_ultra_package_choice_id = ""
+        self._save_application_contexts()
+        self._request_code_analysis_auto_enable()
+        return True
+
+    def dismissImportedPackageUltraChoice(self, package_id: str) -> None:  # noqa: N802
+        selected = str(package_id or "").strip()
+        if selected and selected == str(self._pending_ultra_package_choice_id or ""):
+            self._pending_ultra_package_choice_id = ""
+            self._pending_ultra_package_choice_error = ""
+            self.stateChanged.emit()
+
+    def _set_code_analysis_auto_enable_pending(self, pending: bool) -> None:
+        value = bool(pending)
+        if value == bool(self._code_analysis_auto_enable_pending):
+            return
+        self._code_analysis_auto_enable_pending = value
+        self._preferences.setValue(
+            self._workspace_research_preference("code_analysis_auto_enable_pending"),
+            value,
+        )
+        self._preferences.sync()
+
+    def _request_code_analysis_auto_enable(self) -> None:
+        self._set_code_analysis_auto_enable_pending(True)
+        self._sync_code_analysis_auto_enable()
+
+    def _sync_code_analysis_auto_enable(self) -> None:
+        if not self._ultra_application_contexts:
+            self._set_code_analysis_auto_enable_pending(False)
+            if self._code_analysis_enabled:
+                self._code_analysis_enabled = False
+                self._preferences.setValue("research/code_analysis_enabled", False)
+                self._preferences.sync()
+                self.stateChanged.emit()
+            return
+        if not self._code_analysis_auto_enable_pending:
+            return
+        if not self.ultraApplicationContextsReady:
+            if self._code_analysis_enabled:
+                self._code_analysis_enabled = False
+                self._preferences.setValue("research/code_analysis_enabled", False)
+                self._preferences.sync()
+                self.stateChanged.emit()
+            return
+        self._code_analysis_enabled = True
+        self._preferences.setValue("research/code_analysis_enabled", True)
+        self._preferences.sync()
+        self._set_code_analysis_auto_enable_pending(False)
         self.stateChanged.emit()
 
 
@@ -1281,7 +1398,7 @@ class CodeAdminDomain:
         self.stateChanged.emit()
 
 
-    def snapshotCodeAnalysisRelease(self, release_id: str, *, source_override: str = "", single_override: bool | None = None, preview_fingerprint: list[dict[str, Any]] | None = None) -> bool:  # noqa: N802
+    def snapshotCodeAnalysisRelease(self, release_id: str, *, source_override: str = "", single_override: bool | None = None, preview_fingerprint: list[dict[str, Any]] | None = None, offer_ultra_choice: bool = False) -> bool:  # noqa: N802
         """Detect, categorize and inventory local JARs off the UI thread."""
 
         selected_release = str(release_id or "").strip()
@@ -1325,6 +1442,7 @@ class CodeAdminDomain:
                 return False
 
         self._release_snapshot_running = True
+        self._release_snapshot_progress = 0.0
         self._release_snapshot_status = (
             "Validando prévia…"
             if preview_fingerprint is not None
@@ -1403,6 +1521,7 @@ class CodeAdminDomain:
                     "updated_applications": list(
                         manifest.get("updated_applications") or []
                     ),
+                    "offer_ultra_choice": bool(offer_ultra_choice),
                 }
             )
             self._releaseSnapshotReady.emit()
@@ -1436,6 +1555,7 @@ class CodeAdminDomain:
             return False
 
         self._release_snapshot_running = True
+        self._release_snapshot_progress = 0.0
         self._release_snapshot_status = (
             f"Removendo o índice da release {selected_release} localmente..."
         )
@@ -1491,6 +1611,7 @@ class CodeAdminDomain:
         ):
             return False
         self._release_snapshot_running = True
+        self._release_snapshot_progress = 0.0
         self._release_snapshot_status = "Limpando artefatos órfãos do índice..."
         self.stateChanged.emit()
         results = self._release_snapshot_results
@@ -1592,6 +1713,16 @@ class CodeAdminDomain:
                 self._apply_decompiled_import_progress(current, total)
                 self.stateChanged.emit()
                 return
+            if progress_operation in {"export_knowledge", "import_knowledge"}:
+                self._KnowledgeTransfer_domain._apply_knowledge_transfer_progress(
+                    current, total
+                )
+                self.stateChanged.emit()
+                return
+            if total > 0:
+                self._release_snapshot_progress = round(
+                    max(0.0, min(100.0, 100.0 * current / total)), 1
+                )
             stage = str(latest_progress.get("stage") or "")
             filename = str(latest_progress.get("file") or "")
             stage_labels = {
@@ -1620,12 +1751,51 @@ class CodeAdminDomain:
 
         operation = str(latest.get("operation") or "")
         self._release_snapshot_running = False
+        self._release_snapshot_progress = 0.0
         if operation == "export_decompiled":
             self._decompiled_export_running = False
         elif operation == "import_decompiled":
             self._decompiled_import_running = False
+        if operation in {"export_knowledge", "import_knowledge", "detect_knowledge"}:
+            self._knowledge_transfer_running = False
         self._release_snapshot_poll_timer.stop()
         if latest.get("workspace", self._settings.root) != self._settings.root:
+            self.stateChanged.emit()
+            return
+        if operation in {"detect_knowledge", "import_knowledge", "export_knowledge"}:
+            if latest.get("ok"):
+                result = latest["result"]
+                if operation == "detect_knowledge":
+                    self._release_snapshot_status = result.get(
+                        "error", "Confira os documentos detectados no pacote."
+                    )
+                    self.knowledgePackageDetected.emit(result)
+                elif operation == "export_knowledge":
+                    self._release_snapshot_status = (
+                        "Conhecimento exportado com sucesso. "
+                        f"{result['document_count']:,} documentos e "
+                        f"{result['asset_count']:,} anexos empacotados."
+                    ).replace(",", ".")
+                    self.knowledgePackageExported.emit(result)
+                else:
+                    failures = int(result.get("error_count") or 0)
+                    self._release_snapshot_status = (
+                        "Importação de conhecimento concluída: "
+                        f"{result['created']:,} criados, "
+                        f"{result['updated']:,} atualizados, "
+                        f"{result['unchanged']:,} inalterados."
+                        + (f" {failures:,} falhas." if failures else "")
+                    ).replace(",", ".")
+                    self._KnowledgeTransfer_domain.refreshKnowledgeTransferSummary()
+                    self.knowledgePackageImported.emit(result)
+            else:
+                detail = str(latest.get("error") or "falha desconhecida")
+                self._release_snapshot_status = (
+                    f"Não foi possível exportar o conhecimento: {detail}"
+                    if operation == "export_knowledge"
+                    else detail
+                )
+                self.knowledgeTransferFailed.emit(detail)
             self.stateChanged.emit()
             return
         if operation in {"detect_decompiled", "import_decompiled", "export_decompiled", "delete_source_jars"}:
@@ -1736,6 +1906,9 @@ class CodeAdminDomain:
             self.stateChanged.emit()
             return
         if bool(latest.get("ok")):
+            if latest.get("offer_ultra_choice") and release_id:
+                self._pending_ultra_package_choice_id = release_id
+                self._pending_ultra_package_choice_error = ""
             self.refreshApplicationsCatalog()
             self._invalidate_release_coverage()
             self._refresh_code_analysis_releases()
@@ -2073,7 +2246,9 @@ class CodeAdminDomain:
             self._warm_release_coverage()
 
 
-    def refreshCodeAnalysisReleases(self) -> None:  # noqa: N802
+    def refreshCodeAnalysisReleases(
+        self, *, refresh_applications_catalog: bool = True
+    ) -> None:  # noqa: N802
         previous = self._code_analysis_release
         was_enabled = self._code_analysis_enabled
         preferences_changed = False
@@ -2096,7 +2271,8 @@ class CodeAdminDomain:
         if preferences_changed:
             self._preferences.sync()
         self.refreshCodeProcessingStatus()
-        self.refreshApplicationsCatalog()
+        if refresh_applications_catalog:
+            self.refreshApplicationsCatalog()
         self.stateChanged.emit()
 
     def refreshApplicationsCatalog(self) -> None:  # noqa: N802
@@ -2110,6 +2286,11 @@ class CodeAdminDomain:
         phase_signal = getattr(self, "applicationsCatalogPhase", None)
         stop = self._release_coverage_stop
         self._apps_catalog_dirty = False
+        self._apps_catalog_phase = ""
+        self._apps_catalog_phase_apps = 0
+        self._apps_catalog_phase_versions = 0
+        self._apps_catalog_progress_current = 0
+        self._apps_catalog_progress_total = 0
         if phase_signal is not None:
             try:
                 phase_signal.emit("detecting_apps", 0, 0)
@@ -2133,12 +2314,33 @@ class CodeAdminDomain:
                         pass
                 index = JavaCodeIndex(workspace)
                 coverage = {}
+                candidates = []
                 for package_id in data["packages"]:
                     if stop.is_set():
                         return
                     if (catalog.paths.manifest_for(package_id).is_file()
                             and catalog.status(package_id).get("freshness") == "fresh"):
-                        coverage[package_id] = index.coverage(package_id)
+                        candidates.append(package_id)
+                total_candidates = len(candidates)
+                if phase_signal is not None and total_candidates and not stop.is_set():
+                    try:
+                        phase_signal.emit("indexing_coverage", 0, total_candidates)
+                    except RuntimeError:
+                        pass
+                last_progress_emit = 0.0
+                for position, package_id in enumerate(candidates, start=1):
+                    if stop.is_set():
+                        return
+                    coverage[package_id] = index.coverage(package_id)
+                    now = time.monotonic()
+                    if (phase_signal is not None and not stop.is_set()
+                            and (position == total_candidates
+                                 or now - last_progress_emit >= 0.2)):
+                        last_progress_emit = now
+                        try:
+                            phase_signal.emit("indexing_coverage", position, total_candidates)
+                        except RuntimeError:
+                            pass
                 plans = index.store.status() if coverage else []
                 for application in data["applications"].values():
                     for version in application["versions"].values():
@@ -2204,6 +2406,7 @@ class CodeAdminDomain:
             self._packages_catalog = result["packages"]
             self._applications_catalog_loaded = True
             self.selectApplication(self._selected_app_id)
+            self._sync_code_analysis_auto_enable()
             if phase_signal is not None:
                 try:
                     versions_count = result.get("versions_count")
@@ -2308,6 +2511,7 @@ class CodeAdminDomain:
         stop = self._release_coverage_stop
         self._application_import_preview = {"state": "running"}
         self._release_snapshot_running = True
+        self._release_snapshot_progress = 0.0
         self._release_snapshot_status = "Detectando aplicativos…"
 
         def progress_cb(event: dict[str, Any]) -> None:
@@ -2355,7 +2559,8 @@ class CodeAdminDomain:
             return False
         started = CodeAdminDomain.snapshotCodeAnalysisRelease(self, preview["release_id"],
             source_override=preview["source"], single_override=preview["single"],
-            preview_fingerprint=preview["fingerprint"])
+            preview_fingerprint=preview["fingerprint"],
+            offer_ultra_choice=not bool(preview.get("single")))
         if started:
             self._application_import_preview = {}
             self.stateChanged.emit()
@@ -2367,7 +2572,7 @@ class CodeAdminDomain:
         candidate = Path(source_path).resolve()
         if not candidate.is_dir():
             return False
-        return CodeAdminDomain.snapshotCodeAnalysisRelease(self, "", source_override=str(candidate), single_override=False)
+        return CodeAdminDomain.snapshotCodeAnalysisRelease(self, "", source_override=str(candidate), single_override=False, offer_ultra_choice=True)
 
     def importSingleJar(self, jar_path: str) -> bool:  # noqa: N802
         candidate = Path(str(jar_path or "").strip()).resolve()
@@ -2440,32 +2645,6 @@ class CodeAdminDomain:
             return {"deleted_count": 0, "error": "Aguarde a operação em andamento."}
         workspace = self._settings.root
         self._start_package_task("delete_source_jars", lambda: ErpReleaseCatalog(workspace).delete_source_jars(package_id))
-        return {"pending": True}
-
-    def detectDecompiledDirectory(self, directory: str = "") -> dict[str, Any]:  # noqa: N802
-        if self._closed or self._release_snapshot_running or self._code_processing_running:
-            return {"is_valid": False, "busy": True}
-        target_dir = str(directory or "").strip()
-        if not target_dir:
-            initial = str(self._settings.root)
-            target_dir = QFileDialog.getExistingDirectory(
-                None,
-                "Selecionar pasta de código descompilado",
-                initial,
-            )
-            if not target_dir:
-                return {"is_valid": False, "canceled": True}
-        self._start_package_task("detect_decompiled", lambda: detect_decompiled_source(target_dir))
-        return {"pending": True}
-
-    def importDecompiledDirectory(self, source_dir: str, release_id: str = "", package_name: str = "") -> dict[str, Any]:  # noqa: N802
-        if self._closed or self._release_snapshot_running or self._code_processing_running:
-            return {"success": False, "busy": True}
-        workspace = self._settings.root
-        self._start_package_task("import_decompiled", lambda progress=None: import_decompiled_source(
-            workspace, source_dir, release_id=release_id, package_name=package_name,
-            progress=progress,
-        ))
         return {"pending": True}
 
     def exportDecompiledCode(self, destination_parent: str = "") -> dict[str, Any]:  # noqa: N802
@@ -2565,6 +2744,7 @@ class CodeAdminDomain:
         results = self._release_snapshot_results
         signal = self._releaseSnapshotReady
         self._release_snapshot_running = True
+        self._release_snapshot_progress = 0.0
         self._release_snapshot_status = {
             "detect_decompiled": "Detectando fontes...",
             "import_decompiled": "Importando fontes...",
@@ -2632,6 +2812,7 @@ class CodeAdminDomain:
             return False
 
         self._release_snapshot_running = True
+        self._release_snapshot_progress = 0.0
         self._release_snapshot_status = (
             f"Removendo pacote '{selected}' e excluindo índices e descompilados..."
         )

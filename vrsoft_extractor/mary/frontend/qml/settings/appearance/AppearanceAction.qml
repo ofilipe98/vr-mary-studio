@@ -32,7 +32,7 @@ Button {
         Text {
             visible: control.text !== ""
             text: control.text; color: Theme.palette.text
-            font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12); font.weight: Font.DemiBold
+            font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption; font.weight: Font.DemiBold
         }
     }
 }

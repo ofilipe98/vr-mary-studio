@@ -64,7 +64,12 @@ def bounded_candidates(candidates, max_chars: int = 32000) -> tuple[EvidenceCand
     return tuple(result)
 
 
-def mcp_command(root: Path, scope_path: str = "", monitor_session_id: str = "") -> list[str]:
+def mcp_command(
+    root: Path,
+    scope_path: str = "",
+    monitor_session_id: str = "",
+    vr_tools_enabled: bool = True,
+) -> list[str]:
     command = [sys.executable]
     if getattr(sys, "frozen", False):
         command += ["--knowledge-mcp"]
@@ -76,6 +81,8 @@ def mcp_command(root: Path, scope_path: str = "", monitor_session_id: str = "") 
         command += ["--context", scope_path]
     if monitor_session_id:
         command += ["--monitor-session", monitor_session_id]
+    if not vr_tools_enabled:
+        command += ["--disable-vr-tools"]
     return command
 
 

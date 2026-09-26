@@ -9,9 +9,7 @@ Column {
     property string messageKey: ""
     property bool streaming: false
     property var sources: []
-    property bool copied: false
     readonly property bool animating: collapsible.animating
-    signal copyRequested()
     signal layoutChanging()
     signal toggled(bool expanded, real heightDelta)
     signal anchorRequested()
@@ -87,18 +85,5 @@ Column {
             color: Theme.palette.mutedText
             visible: root.streaming
         }
-        VrIconButton {
-            id: copy
-            objectName: "messageCopyButton"
-            anchors.left: parent.left
-            width: Theme.scaledGeometry(28); height: Theme.scaledGeometry(26); iconSize: Theme.iconSmall
-            iconKind: root.copied ? "check" : "copy"
-            opacity: hover.hovered || hovered || activeFocus || root.copied ? 1 : 0
-            Accessible.name: root.copied ? "Copiado" : "Copiar resposta"
-            onClicked: { root.copyRequested(); root.copied = true; copiedTimer.restart() }
-            Behavior on opacity { enabled: !frontend.reduceMotion; NumberAnimation { duration: Theme.fastDuration } }
-        }
     }
-    Timer { id: copiedTimer; interval: 1500; onTriggered: root.copied = false }
-    HoverHandler { id: hover }
 }

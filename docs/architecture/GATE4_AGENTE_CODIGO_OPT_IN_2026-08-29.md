@@ -2,6 +2,9 @@
 
 Data: 2026-08-29
 
+> Registro histórico: este documento descreve o estado de 29/08/2026. O contrato
+> atual de perfis está em `docs/DEVELOPMENT.md`.
+
 ## Decisão
 
 O Agente de Código é opcional e fica desligado por padrão. A configuração é

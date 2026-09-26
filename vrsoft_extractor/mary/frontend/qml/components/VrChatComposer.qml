@@ -28,13 +28,16 @@ Item {
     // Compatibilidade: consumidores externos ainda leem radius/color do componente.
     readonly property alias color: composerSurface.color
     readonly property alias radius: composerSurface.radius
+    // T3 Code resting semantics: the composer reads the live edge from the
+    // list's followTail intent, not from transient geometry. While the page
+    // streams, followTail stays armed and the composer stays expanded; a turn
+    // in progress never rests it by itself. Scrolling away rests it, and
+    // reaching the end restores it without stopping the turn.
     readonly property bool isAtBottom: {
         var list = composerCard.page ? composerCard.page.messageListHandle : null
         if (!list || list.count === 0) return true
         if (list.contentHeight <= list.height) return true
-        if (list.atYEnd) return true
-        var dist = list.contentHeight - list.height - list.contentY
-        return dist <= 4
+        return list.followTail
     }
     readonly property bool isScrolledUp: {
         var list = composerCard.page ? composerCard.page.messageListHandle : null
@@ -45,7 +48,7 @@ Item {
     property bool isCompact: composerCard.page && composerCard.page.messageListHandle && composerCard.page.messageListHandle.count > 0
         && !composerInput.activeFocus
         && !hasComposerContent
-        && (!isAtBottom || composerCard.page.chatBridge.turnRunning)
+        && !isAtBottom
     readonly property bool hasChips: (composerCard.page.chatBridge.attachments.length > 0) || (composerCard.page.chatBridge.activeSkills && composerCard.page.chatBridge.activeSkills.length > 0)
     readonly property bool hasImageAttachments: {
         var list = composerCard.page.chatBridge.attachments || []
@@ -73,30 +76,42 @@ Item {
     readonly property bool hasSkills: composerCard.page.chatBridge.activeSkills && composerCard.page.chatBridge.activeSkills.length > 0
     readonly property real attachmentsAreaHeight: {
         var h = 0
-        if (hasImageAttachments) h += Theme.scaledGeometry(68)
+        if (hasImageAttachments) h += Theme.scaledGeometry(72)
         if (hasFileAttachments) h += Theme.scaledGeometry(34)
         return h
     }
     // Distância do topo do cartão até o campo de texto, sem ler AnchorLines
     // (attachmentList.bottom.y é indefinido e zerava a margem, sobrepondo o texto aos thumbnails).
-    // Thumbnails: top 12 + altura 60 = 72; faixa de arquivos: 10 (sem thumbs) ou 8 + 30 de altura.
+    // Thumbnails: top 16 + altura 64 = 80; faixa de arquivos: 16 (sem thumbs)
+    // ou 8 + 30 de altura, com 6 de respiro antes do texto.
     readonly property real composerTopMargin: {
         if (composerCard.isCompact) return Theme.scaledGeometry(6)
-        if (hasImageAttachments && hasFileAttachments) return Theme.scaledGeometry(116)
-        if (hasImageAttachments) return Theme.scaledGeometry(78)
-        if (hasFileAttachments) return Theme.scaledGeometry(46)
-        return Theme.scaledGeometry(12)
+        if (hasImageAttachments && hasFileAttachments) return Theme.scaledGeometry(124)
+        if (hasImageAttachments) return Theme.scaledGeometry(86)
+        if (hasFileAttachments) return Theme.scaledGeometry(52)
+        return Theme.spaceLg
     }
     readonly property real skillsAreaHeight: hasSkills ? Theme.scaledGeometry(34) : 0
     readonly property real chipAreaHeight: attachmentsAreaHeight + skillsAreaHeight
 
-    readonly property real normalScrollHeight: Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(Theme.scaledGeometry(54),
+    // T3 Code editor: `min-h-17.5` (70px) expanded, `min-h-8` (32px) resting.
+    readonly property real normalScrollHeight: Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(Theme.scaledGeometry(70),
         composerInput.contentHeight + composerInput.topPadding + composerInput.bottomPadding))
     // Expandido: card único com a linha de controles integrada na base.
-    readonly property real normalHeight: normalScrollHeight + (chipAreaHeight > 0 ? chipAreaHeight + Theme.spaceSm : 0) + Theme.compactControlHeight + Theme.scaledGeometry(22)
+    // pt-4 (16) + editor + pb-2 (8) + controles + pb-4 (16).
+    readonly property real normalHeight: normalScrollHeight + (chipAreaHeight > 0 ? chipAreaHeight + Theme.spaceSm : 0) + Theme.compactControlHeight + Theme.scaledGeometry(40)
     // Compacto: faixa do campo + bandeja de controles separada logo abaixo.
     readonly property real compactSurfaceHeight: Theme.scaledGeometry(46)
     readonly property real compactHeight: compactSurfaceHeight + Theme.compactControlHeight - Theme.spaceXs
+    // T3 Code context strip: `--chat-composer-drawer-inset: 1.375rem` and
+    // `rounded-b-2xl` for the inset bottom band.
+    readonly property real compactInset: Theme.scaledGeometry(22)
+    readonly property int compactStripRadius: Theme.radiusLg
+    // Retraído, o campo reserva a largura de anexo + enviar para o texto
+    // nunca correr sob as ações primárias compactas.
+    readonly property real compactActionsReserve: composerCard.isCompact
+        ? Theme.scaledGeometry(82)
+        : Math.max(Theme.scaledGeometry(86), composerSurface.width - vrModeButton.x + Theme.spaceSm)
 
     objectName: "chatComposerCard"
     z: 20
@@ -105,7 +120,7 @@ Item {
     anchors.bottomMargin: composerCard.page.messageListHandle.count > 0 ? (composerCard.page.expertStripHeight + 36) : 0
     y: composerCard.page.messageListHandle.count > 0 ? 0
         : Math.max(composerCard.page.chatHeaderHandle.height + composerCard.page.landingHandle.height + composerCard.page.usagePanelHeight + 32,
-            (parent.height + composerCard.page.chatHeaderHandle.height + composerCard.page.landingHandle.height + composerCard.page.usagePanelHeight + 24 - height - composerCard.page.expertStripHeight) / 2)
+            (parent.height - height) / 2)
     width: Math.min(Theme.contentWidth, parent.width - (parent.width < 600 ? 28 : 48))
     height: isCompact ? compactHeight : normalHeight
     readonly property bool vrActive: Boolean(composerCard.page && composerCard.page.chatBridge && composerCard.page.chatBridge.vrMode !== "off")
@@ -120,9 +135,117 @@ Item {
     }
 
     TapHandler {
-        enabled: composerCard.isCompact && !composerCard.page.chatBridge.turnRunning
+        // T3 Code lifts the resting composer on any composer interaction,
+        // including a click while a turn is still streaming.
+        enabled: composerCard.isCompact
         onTapped: {
             composerInput.forceActiveFocus()
+        }
+    }
+
+    // Backdrop retraído: uma única silhueta contínua no formato do T3 Code —
+    // card arredondado com a faixa de controles encaixada na base — para que
+    // o campo e a bandeja compartilhem borda e nenhum conteúdo da timeline
+    // apareça pelos cantos transparentes entre os dois.
+    Canvas {
+        id: composerRestingSurface
+        objectName: "chatComposerRestingSurface"
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        height: composerCard.compactHeight
+        visible: composerCard.isCompact
+        z: 0
+        antialiasing: true
+        readonly property int topRadius: composerCard.compactInset
+        readonly property int stripInset: composerCard.compactInset
+        readonly property int stripTop: composerCard.compactSurfaceHeight
+        readonly property int stripRadius: composerCard.compactStripRadius
+        readonly property color fillColor: Theme.palette.chatComposer
+        readonly property color outlineColor: composerCard.page.composerDropActive
+            ? (composerCard.vrActive ? Theme.vrAccent : Theme.palette.brandOrange)
+            : (composerInput.activeFocus
+                ? (Theme.palette.appearance === "light" ? Qt.alpha(Theme.palette.border, 0.85) : Qt.rgba(255, 255, 255, 0.20))
+                : (Theme.palette.appearance === "light" ? Qt.alpha(Theme.palette.border, 0.6) : Qt.rgba(255, 255, 255, 0.08)))
+        onFillColorChanged: requestPaint()
+        onOutlineColorChanged: requestPaint()
+        onTopRadiusChanged: requestPaint()
+        onWidthChanged: requestPaint()
+        onHeightChanged: requestPaint()
+        onVisibleChanged: requestPaint()
+        onPaint: {
+            var ctx = getContext("2d")
+            ctx.reset()
+            var w = width
+            var h = height
+            if (w <= 0 || h <= 0) return
+            var strip = Math.max(0, Math.min(stripTop, h))
+            var top = Math.max(0, Math.min(topRadius, w / 2, strip / 2))
+            var inset = top
+            var sr = Math.max(0, Math.min(stripRadius, h - strip, (w - inset * 2) / 2))
+
+            // Fator de aproximação bezier cúbica para cantos arredondados (T3 Code shape parity)
+            var kTop = top * 0.4477
+            var kInset = inset * 0.4477
+            var kSr = sr * 0.4477
+
+            ctx.beginPath()
+            ctx.moveTo(0, top)
+            // Canto superior esquerdo
+            ctx.bezierCurveTo(0, kTop, kTop, 0, top, 0)
+            // Borda superior
+            ctx.lineTo(w - top, 0)
+            // Canto superior direito
+            ctx.bezierCurveTo(w - kTop, 0, w, kTop, w, top)
+            // Borda lateral direita do card superior
+            ctx.lineTo(w, strip - inset)
+            // Transição suave para o recuo da bandeja de controles (bezier cúbica T3 Code)
+            ctx.bezierCurveTo(w, strip - kInset, w - kInset, strip, w - inset, strip)
+            // Borda lateral direita da bandeja de controles
+            ctx.lineTo(w - inset, h - sr)
+            // Canto inferior direito da bandeja
+            if (sr > 0)
+                ctx.bezierCurveTo(w - inset, h - kSr, w - inset - kSr, h, w - inset - sr, h)
+            // Borda inferior da bandeja
+            ctx.lineTo(inset + sr, h)
+            // Canto inferior esquerdo da bandeja
+            if (sr > 0)
+                ctx.bezierCurveTo(inset + kSr, h, inset, h - kSr, inset, h - sr)
+            // Borda lateral esquerda da bandeja de controles
+            ctx.lineTo(inset, strip)
+            // Transição suave saindo da bandeja para o card superior (bezier cúbica T3 Code)
+            ctx.bezierCurveTo(inset * 0.4477, strip, 0, strip - kInset, 0, strip - inset)
+            // Borda lateral esquerda do card superior
+            ctx.lineTo(0, top)
+            ctx.closePath()
+
+            ctx.fillStyle = fillColor
+            ctx.fill()
+
+            // Linha sutil da costura entre o card superior e a bandeja
+            ctx.beginPath()
+            ctx.moveTo(inset, strip)
+            ctx.lineTo(w - inset, strip)
+            ctx.strokeStyle = Theme.palette.appearance === "light"
+                ? Qt.alpha(Theme.palette.border, 0.4)
+                : Qt.rgba(255, 255, 255, 0.05)
+            ctx.lineWidth = 1
+            ctx.stroke()
+
+            // Destaque superior interno sutil no tema escuro (rim-light)
+            if (Theme.palette.appearance !== "light") {
+                ctx.beginPath()
+                ctx.moveTo(top, 1)
+                ctx.lineTo(w - top, 1)
+                ctx.strokeStyle = Qt.rgba(255, 255, 255, 0.04)
+                ctx.lineWidth = 1
+                ctx.stroke()
+            }
+
+            // Contorno externo contínuo
+            ctx.strokeStyle = outlineColor
+            ctx.lineWidth = 1
+            ctx.stroke()
         }
     }
 
@@ -136,17 +259,15 @@ Item {
         height: composerCard.isCompact
             ? composerCard.compactSurfaceHeight
             : composerCard.normalHeight
-        radius: Theme.scaledGeometry(16)
+        radius: Theme.composerRadius
         clip: true
-        color: Theme.palette.chatComposer
-        border.width: 1
+        color: composerCard.isCompact ? "transparent" : Theme.palette.chatComposer
+        border.width: composerCard.isCompact ? 0 : 1
         border.color: composerCard.page.composerDropActive
             ? (composerCard.vrActive ? Theme.vrAccent : Theme.palette.brandOrange)
-            : (composerCard.vrActive && !composerCard.isCompact)
-                ? (composerInput.activeFocus ? Theme.vrAccent : Qt.alpha(Theme.vrAccent, 0.45))
-                : (composerInput.activeFocus
-                    ? (Theme.palette.appearance === "light" ? Qt.alpha(Theme.palette.border, 0.85) : Qt.rgba(255, 255, 255, 0.20))
-                    : (Theme.palette.appearance === "light" ? Qt.alpha(Theme.palette.border, 0.6) : Qt.rgba(255, 255, 255, 0.08)))
+            : (composerInput.activeFocus
+                ? (Theme.palette.appearance === "light" ? Qt.alpha(Theme.palette.border, 0.85) : Qt.rgba(255, 255, 255, 0.20))
+                : (Theme.palette.appearance === "light" ? Qt.alpha(Theme.palette.border, 0.6) : Qt.rgba(255, 255, 255, 0.08)))
         z: 1
 
         Behavior on border.color {
@@ -188,8 +309,8 @@ Item {
             anchors.top: parent.top
             anchors.leftMargin: Theme.scaledGeometry(14)
             anchors.rightMargin: Theme.scaledGeometry(14)
-            anchors.topMargin: Theme.scaledGeometry(12)
-            height: visible ? Theme.scaledGeometry(60) : 0
+            anchors.topMargin: Theme.spaceLg
+            height: visible ? Theme.scaledGeometry(64) : 0
             orientation: ListView.Horizontal
             spacing: Theme.scaledGeometry(10)
             clip: true
@@ -212,8 +333,8 @@ Item {
                     return "file://" + p.replace(/\\/g, "/")
                 }
                 visible: isImage
-                width: isImage ? Theme.scaledGeometry(60) : 0
-                height: isImage ? Theme.scaledGeometry(60) : 0
+                width: isImage ? Theme.scaledGeometry(64) : 0
+                height: isImage ? Theme.scaledGeometry(64) : 0
 
                 Rectangle {
                     id: imageThumbnailCard
@@ -228,7 +349,9 @@ Item {
                     Image {
                         id: thumbImage
                         anchors.fill: parent
-                        source: thumbDelegate.imageSource
+                        // Non-image attachments get a chip instead; without this
+                        // gate the decoder logs spurious format errors.
+                        source: thumbDelegate.isImage ? thumbDelegate.imageSource : ""
                         fillMode: Image.PreserveAspectCrop
                         asynchronous: true
                         cache: true
@@ -345,11 +468,11 @@ Item {
             property alias text: composerInput.text
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.leftMargin: Theme.scaledGeometry(16)
-            anchors.rightMargin: composerCard.isCompact ? 86 : 16
+            anchors.leftMargin: Theme.spaceLg
+            anchors.rightMargin: composerCard.isCompact ? composerCard.compactActionsReserve : Theme.spaceLg
             anchors.top: parent.top
             anchors.topMargin: composerCard.composerTopMargin
-            height: composerCard.isCompact ? Theme.scaledGeometry(34) : Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(Theme.scaledGeometry(54),
+            height: composerCard.isCompact ? Theme.scaledGeometry(34) : Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(Theme.scaledGeometry(70),
                 contentHeight + topPadding + bottomPadding))
             clip: true
 
@@ -464,9 +587,8 @@ Item {
             id: attachButton
             objectName: "chatAttachButton"
             anchors.right: sendButton.left
-            anchors.rightMargin: Theme.scaledGeometry(8)
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: Theme.scaledGeometry(8)
+            anchors.rightMargin: Theme.scaledGeometry(6)
+            anchors.verticalCenter: sendButton.verticalCenter
             width: Theme.scaledGeometry(32)
             height: Theme.scaledGeometry(32)
             implicitWidth: Theme.scaledGeometry(32)
@@ -483,9 +605,11 @@ Item {
             id: sendButton
             objectName: "chatSendButton"
             anchors.right: parent.right
-            anchors.rightMargin: Theme.scaledGeometry(12)
+            anchors.rightMargin: Theme.scaledGeometry(composerCard.isCompact ? 10 : 16)
             anchors.bottom: parent.bottom
-            anchors.bottomMargin: Theme.scaledGeometry(8)
+            anchors.bottomMargin: composerCard.isCompact
+                ? Math.round((composerCard.compactSurfaceHeight - height) / 2)
+                : Theme.spaceLg
             width: Theme.scaledGeometry(32)
             height: Theme.scaledGeometry(32)
             implicitWidth: Theme.scaledGeometry(32)
@@ -519,6 +643,7 @@ Item {
         Button {
             id: vrModeButton
             objectName: "vrModeButton"
+            visible: !composerCard.isCompact
             property string variant: composerCard.page.chatBridge.vrMode !== "off" ? "primary" : "ghost"
             implicitWidth: vrModeContent.implicitWidth + 14
             implicitHeight: Theme.scaledGeometry(28)
@@ -562,21 +687,18 @@ Item {
         // Retraído: bandeja mais estreita, ancorada nas laterais do composer e
         // sobreposta ao campo logo acima, de modo que só os cantos inferiores
         // arredondados apareçam — sem uma segunda curva solta no meio.
-        readonly property real compactInset: Theme.spaceLg
-        x: composerCard.isCompact ? compactInset : Theme.spaceXs
+        x: composerCard.isCompact ? composerCard.compactInset : Theme.spaceXs
         y: composerCard.isCompact
             ? composerCard.compactSurfaceHeight - Theme.spaceXs
-            : composerCard.normalHeight - height - 8
+            : composerCard.normalHeight - height - Theme.spaceLg
         width: composerCard.isCompact
-            ? composerCard.width - 2 * compactInset
+            ? composerCard.width - 2 * composerCard.compactInset
             : Math.max(0, vrModeButton.x - 2 * Theme.spaceXs)
         height: Theme.compactControlHeight
-        radius: composerCard.isCompact ? Theme.radiusControl : 0
-        color: composerCard.isCompact ? Theme.palette.chatComposer : "transparent"
-        border.width: composerCard.isCompact ? 1 : 0
-        border.color: Theme.palette.appearance === "light"
-            ? Qt.alpha(Theme.palette.border, 0.6)
-            : Qt.rgba(255, 255, 255, 0.08)
+        // Retraído, o fundo e o contorno pertencem à silhueta única do card.
+        radius: composerCard.isCompact ? composerCard.compactStripRadius : 0
+        color: "transparent"
+        border.width: 0
         z: composerCard.isCompact ? 0 : 2
         clip: composerCard.isCompact
 
@@ -650,18 +772,6 @@ Item {
                 }
 
                 Item { Layout.fillWidth: true }
-
-                VrContextButton {
-                    id: contextUsageButton
-                    objectName: "contextUsageButton"
-                    implicitWidth: Theme.scaledGeometry(28)
-                    implicitHeight: Theme.scaledGeometry(28)
-                    visible: composerCard.page.chatBridge.hasContextWindow
-                    fraction: composerCard.page.chatBridge.contextUsageFraction
-                    usageLabel: composerCard.page.chatBridge.contextUsageCompactLabel
-                    totalLabel: composerCard.page.chatBridge.totalProcessedLabel
-                    note: composerCard.page.chatBridge.contextUsageNote
-                }
             }
         }
     }

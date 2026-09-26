@@ -2,6 +2,9 @@
 
 Data: 2026-08-29
 
+> Registro histórico: este documento descreve o estado de 29/08/2026. O contrato
+> atual de perfis está em `docs/DEVELOPMENT.md`.
+
 ## Decisão
 
 A análise de código do VR Ultra só pode ser ativada quando existe uma release

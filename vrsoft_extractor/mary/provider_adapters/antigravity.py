@@ -193,13 +193,27 @@ class AntigravityProvider(AgentProvider):
                     Path(self.knowledge_root),
                     options.knowledge_context_path,
                     cid,
+                    vr_tools_enabled=options.vr_enabled,
                 )
                 params["mcpServers"] = [{
                     "name": "vr-mary-studio", "command": command[0],
                     "args": command[1:], "env": [],
                 }]
             if options.vr_enabled and self.knowledge_root:
-                message += "\n\nUse as fontes já fornecidas. Se uma ferramenta for recusada, não repita a operação; responda com o contexto disponível e indique lacunas."
+                if options.tools_enabled:
+                    message += (
+                        "\n\nAMBIENTE ANTIGRAVITY: as ferramentas de arquivo deste "
+                        "runtime ficam restritas à pasta de trabalho da conversa; a "
+                        "base VR não é legível diretamente. Consulte a base somente "
+                        "com `vr_sources`, `vr_search` e `vr_read`. Se uma chamada "
+                        "for recusada, não a repita: responda com o contexto "
+                        "disponível e indique as lacunas."
+                    )
+                else:
+                    message += (
+                        "\n\nSe uma ferramenta for recusada, não repita a operação; "
+                        "responda com o contexto disponível e indique lacunas."
+                    )
             if native_id:
                 session_id = native_id[len(NATIVE_PREFIX):]
                 state["session"] = session_id
@@ -225,7 +239,7 @@ class AntigravityProvider(AgentProvider):
                 path = Path(image_path)
                 content.append({"type": "image", "mimeType": mimetypes.guess_type(path.name)[0] or "image/png",
                                 "data": base64.b64encode(path.read_bytes()).decode("ascii")})
-            result = client.request("session/prompt", {"sessionId": session_id, "prompt": content}, timeout=600)
+            result = client.request("session/prompt", {"sessionId": session_id, "prompt": content}, timeout=None)
             if result.get("stopReason") == "cancelled":
                 state["cancelled"] = True
             elif result.get("stopReason") not in ("end_turn", "max_tokens"):

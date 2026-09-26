@@ -5,9 +5,11 @@ No CLI/IDE token is copied into this profile.
 """
 from __future__ import annotations
 
+import atexit
 import json
 import logging
 import os
+import signal
 import re
 import shutil
 import subprocess
@@ -37,9 +39,17 @@ MAX_PROTOCOL_LINE = 8 * 1024 * 1024
 # another VRStudio instance) is still using.
 ACP_TEMP_OWNER_LOCK = ".vrstudio-owner.lock"
 
+# Written after the spawn: owner pid, runtime pid and its creation-time
+# identity. Cleanup reads it only after acquiring the owner lock (which proves
+# the owner is gone) so an orphaned runtime is terminated before rmtree.
+ACP_TEMP_RUNTIME_INFO = ".vrstudio-runtime"
+
 # Directories created before the owner lock existed cannot prove liveness;
 # they are only reclaimed after this grace period.
 LEGACY_ACP_TEMP_GRACE_SECONDS = 24 * 60 * 60
+
+# Upper bound for an orphaned runtime to die after taskkill before rmtree.
+ORPHAN_RUNTIME_TERMINATION_TIMEOUT_SECONDS = 2.0
 
 REMOVED_ENVIRONMENT_KEYS = {
     "GEMINI_API_KEY",
@@ -728,12 +738,16 @@ def _create_kill_on_close_job():
 
     job = kernel32.CreateJobObjectW(None, None)
     if not job:
+        logger.warning("CreateJobObjectW falhou para o job kill-on-close do runtime ACP (erro=%d).",
+                       ctypes.get_last_error())
         return None
     limits = _ExtendedLimits()
     limits.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
     if not kernel32.SetInformationJobObject(
         job, _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, ctypes.byref(limits), ctypes.sizeof(limits)
     ):
+        logger.warning("SetInformationJobObject falhou para o job kill-on-close do runtime ACP (erro=%d).",
+                       ctypes.get_last_error())
         kernel32.CloseHandle(job)
         return None
     return job
@@ -746,8 +760,17 @@ def _assign_process_to_job(job, process) -> bool:
     handle = getattr(process, "_handle", None)
     if handle is None:
         return False
-    _, wintypes, kernel32 = _win32_job_api()
-    return bool(kernel32.AssignProcessToJobObject(job, wintypes.HANDLE(int(handle))))
+    ctypes, wintypes, kernel32 = _win32_job_api()
+    if kernel32.AssignProcessToJobObject(job, wintypes.HANDLE(int(handle))):
+        return True
+    # A refused assignment silently disables kill-on-close: the runtime tree
+    # would survive an abrupt owner death and keep its temp dir locked.
+    logger.warning(
+        "Runtime ACP não pôde ser associado ao job kill-on-close (erro=%d); "
+        "o encerramento dependerá do taskkill e da reconciliação de órfãos.",
+        ctypes.get_last_error(),
+    )
+    return False
 
 
 def _close_kill_on_close_job(job) -> None:
@@ -792,12 +815,14 @@ def _remove_acp_temp_dir(path: Path, *, attempts: int = 4, initial_delay: float 
     """
     target = Path(path)
     delay = initial_delay
+    last_error: BaseException | None = None
     for attempt in range(attempts):
         try:
             shutil.rmtree(target)
         except FileNotFoundError:
             return True
-        except OSError:
+        except OSError as exc:
+            last_error = exc
             if attempt == attempts - 1:
                 break
             time.sleep(delay)
@@ -805,7 +830,8 @@ def _remove_acp_temp_dir(path: Path, *, attempts: int = 4, initial_delay: float 
             continue
         if not target.exists():
             return True
-    logger.warning("Could not remove owned ACP temporary directory: %s", target)
+    logger.warning("Could not remove owned ACP temporary directory: %s (%s)",
+                   target, last_error or "path still exists")
     return not target.exists()
 
 
@@ -881,6 +907,75 @@ def _create_owned_temp_dir(parent: Path, *, prefix: str) -> tuple[str, BinaryIO]
     return str(temp_dir), handle
 
 
+def _record_runtime_info(temp_dir: Path | str, runtime_pid: int | None = None) -> None:
+    """Persists owner pid, runtime pid and the runtime's creation-time identity.
+
+    The identity (not the bare PID) is what makes a later orphan kill safe:
+    a recycled PID can never match the recorded value.
+    """
+    from .execution.ownership import process_identity
+
+    pid_field = identity = ""
+    if runtime_pid is not None:
+        runtime_identity = process_identity(int(runtime_pid))
+        # "" means the process already exited; "unknown" is not a proof of
+        # identity (access denied), so neither may ever authorise a kill.
+        if runtime_identity and runtime_identity != "unknown":
+            pid_field, identity = str(int(runtime_pid)), runtime_identity
+    try:
+        Path(temp_dir, ACP_TEMP_RUNTIME_INFO).write_text(
+            f"{os.getpid()}|{pid_field}|{identity}\n", encoding="utf-8"
+        )
+    except OSError:
+        pass
+
+
+def _terminate_recorded_runtime(temp_dir: Path | str) -> None:
+    """Terminates the recorded ACP runtime whose owning client is provably gone.
+
+    Only called after the owner lock was acquired: the owning process died or
+    released the directory, so a runtime still matching its recorded identity
+    is an orphan keeping ``temp_dir`` (and its PyInstaller extraction) locked.
+    With no match the process is already dead or the PID belongs to someone
+    else — nothing is ever signalled in that case.
+    """
+    from .execution.ownership import process_identity
+
+    try:
+        raw = Path(temp_dir, ACP_TEMP_RUNTIME_INFO).read_text(encoding="utf-8").strip()
+    except OSError:
+        return
+    fields = raw.split("|", 2)
+    if len(fields) != 3:
+        return
+    owner_pid, pid_text, identity = fields
+    if not pid_text or not identity:
+        return
+    try:
+        pid = int(pid_text)
+    except ValueError:
+        return
+    if process_identity(pid) != identity:
+        return
+    logger.warning("Encerrando runtime ACP órfão (dono=%s, pid=%s) preso em %s",
+                   owner_pid, pid, temp_dir)
+    if os.name == "nt":
+        try:
+            subprocess.run(["taskkill.exe", "/PID", str(pid), "/T", "/F"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           creationflags=subprocess.CREATE_NO_WINDOW, timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    else:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    deadline = time.time() + ORPHAN_RUNTIME_TERMINATION_TIMEOUT_SECONDS
+    while time.time() < deadline and process_identity(pid) == identity:
+        time.sleep(0.05)
+
+
 def _cleanup_stale_acp_temp_dirs(profile_dir: Path | str | None = None, *, now: float | None = None) -> int:
     """Reclaims orphaned ACP temporary directories left by previous processes.
 
@@ -889,8 +984,10 @@ def _cleanup_stale_acp_temp_dirs(profile_dir: Path | str | None = None, *, now: 
     only when its owner lock can be acquired; a locked directory belongs to a
     live client (possibly from another VRStudio instance) and is preserved.
     Legacy directories without the lock file are removed only after
-    :data:`LEGACY_ACP_TEMP_GRACE_SECONDS`. Failures are logged per entry and
-    never stop the remaining reclaims or the caller's profile preparation.
+    :data:`LEGACY_ACP_TEMP_GRACE_SECONDS`. A reclaimed directory whose recorded
+    runtime outlived its owner is terminated first (identity-verified), and
+    failures are logged per entry and never stop the remaining reclaims or the
+    caller's profile preparation.
     """
     base = Path(profile_dir) if profile_dir else profile_path()
     roots: list[tuple[Path, list[str]]] = []
@@ -929,6 +1026,9 @@ def _cleanup_stale_acp_temp_dirs(profile_dir: Path | str | None = None, *, now: 
                         # in use, so it must not be removed here.
                         continue
                     _release_temp_lock(handle)
+                    # Lock acquired: the owner is gone, but its runtime may
+                    # have survived (job refused/absent). Kill it before rmtree.
+                    _terminate_recorded_runtime(entry)
                     if _remove_acp_temp_dir(entry):
                         removed += 1
                     continue
@@ -1063,12 +1163,24 @@ class AcpClient:
         self._temp_lock: BinaryIO | None = None
         # Kill-on-close job bound to the spawned runtime tree (Windows only).
         self._job = None
+        # An abrupt interpreter exit (Ctrl+C, aborted test session) must still
+        # close the runtime; the atexit hook covers paths where __del__ and
+        # close() would otherwise never run.
+        self._atexit_registered = False
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+
+    def _close_at_exit(self) -> None:
+        # atexit runs during interpreter teardown, where modules may already
+        # be partially torn down: the shutdown must never raise there.
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def start(self, timeout: float = INIT_TIMEOUT_SECONDS) -> dict[str, Any]:
         with self._lock:
@@ -1092,6 +1204,9 @@ class AcpClient:
                     self._temp_dir, self._temp_lock = _create_owned_temp_dir(
                         Path(tempfile.gettempdir()), prefix="vr-acp-"
                     )
+            if not self._atexit_registered:
+                atexit.register(self._close_at_exit)
+                self._atexit_registered = True
 
             env = dict(self.env)
             env.update(TEMP=self._temp_dir, TMP=self._temp_dir, TMPDIR=self._temp_dir)
@@ -1110,6 +1225,9 @@ class AcpClient:
             except OSError:
                 self.close()
                 raise
+            # Recorded immediately after the spawn so a later reconciliation
+            # can verify and terminate this exact runtime as an orphan.
+            _record_runtime_info(self._temp_dir, self.process.pid)
             if self._job is not None and not _assign_process_to_job(self._job, self.process):
                 # A nested/restricted job configuration can refuse the assign;
                 # the spawn stays valid and shutdown falls back to taskkill.
@@ -1254,6 +1372,9 @@ class AcpClient:
             if self._closed:
                 return
             self._closed = True
+            if self._atexit_registered:
+                self._atexit_registered = False
+                atexit.unregister(self._close_at_exit)
             process = self.process
             temp_dir = self._temp_dir
             temp_lock = self._temp_lock

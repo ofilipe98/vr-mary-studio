@@ -13,7 +13,9 @@ from pathlib import Path
 from typing import Literal
 
 _BANNER_TOOLS = frozenset({"cfr", "vineflower"})
-_EDGE_WHITESPACE = " \t"
+# Trailing characters of unprotected lines: spaces/tabs before a line break
+# and a bare CR of a CRLF pair, which is line structure rather than content.
+_EDGE_WHITESPACE = " \t\r"
 _INITIAL_WHITESPACE = "\ufeff \t\r\n"
 
 _NORMAL = 0
@@ -202,7 +204,8 @@ def _initial_banner(
         next_start, next_end = spans[position]
         if not body.startswith("//", next_start):
             break
-        if body[run_end:next_start].strip(_INITIAL_WHITESPACE) != "":
+        gap = body[run_end:next_start]
+        if not gap.startswith("\n") or gap[1:].strip(" \t") != "":
             break
         run_end = next_end
         position += 1

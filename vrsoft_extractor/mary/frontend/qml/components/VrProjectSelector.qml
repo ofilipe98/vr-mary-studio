@@ -190,7 +190,7 @@ Button {
     background: Rectangle {
         radius: control.compact ? 6 : Theme.radiusSmall
         color: control.down || control.hovered
-            ? (control.compact ? Qt.rgba(255, 255, 255, 0.08) : Theme.palette.chatControl)
+            ? Theme.palette.chatControl
             : (control.compact ? "transparent" : Theme.palette.surfaceRaised)
         border.width: control.compact ? 0 : 1
         border.color: control.activeFocus
@@ -306,7 +306,7 @@ Button {
                     anchors.rightMargin: 12
                     anchors.bottom: parent.bottom
                     height: 1
-                    color: selectorSearch.activeFocus ? "#38bdf8" : Qt.rgba(255, 255, 255, 0.12)
+                    color: selectorSearch.activeFocus ? Theme.palette.focus : Theme.palette.border
                     opacity: selectorSearch.activeFocus ? 1.0 : 0.7
                 }
             }
@@ -346,8 +346,8 @@ Button {
                     height: 32
                     radius: 6
                     color: projectRow.selected
-                        ? (Theme.palette.appearance === "light" ? Theme.palette.selection : "#24384c")
-                        : (rowHover.hovered ? Qt.rgba(255, 255, 255, 0.06) : "transparent")
+                        ? Theme.palette.selection
+                        : (rowHover.hovered ? Theme.palette.chatControl : "transparent")
 
                     RowLayout {
                         anchors.fill: parent
@@ -375,7 +375,7 @@ Button {
                             Layout.minimumWidth: 0
                             text: !String(projectRow.modelData.path || "").length && projectRow.modelData.label === "Todos os projetos"
                                 ? "All projects" : projectRow.modelData.label
-                            color: projectRow.selected ? "#ffffff" : Theme.palette.text
+                            color: projectRow.selected ? Theme.palette.headingText : Theme.palette.text
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSize(13)
                             font.weight: projectRow.selected ? Font.DemiBold : Font.Normal
@@ -393,7 +393,7 @@ Button {
                             Layout.preferredHeight: 24
                             iconKind: "settings"
                             iconSize: Theme.iconCompact
-                            foreground: hovered ? "#ffffff" : Qt.rgba(150/255, 156/255, 166/255, 1.0)
+                            foreground: hovered ? Theme.palette.text : Theme.palette.mutedText
                             Accessible.name: "Configurar " + projectRow.modelData.label
                             onClicked: projectRow.activateSettings()
                             z: 2
@@ -479,9 +479,9 @@ Button {
         }
 
         background: Rectangle {
-            color: Theme.palette.appearance === "light" ? Theme.palette.surfaceRaised : "#22272f"
+            color: Theme.palette.surfaceRaised
             border.width: 1
-            border.color: Theme.palette.appearance === "light" ? Theme.palette.border : "#353c48"
+            border.color: Theme.palette.border
             radius: 12
         }
     }

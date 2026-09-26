@@ -170,12 +170,6 @@ def canonical_markdown(document: KnowledgeDocument) -> str:
             )
     yaml_lines.append("---")
     body = document.markdown.strip()
-    if document.ocr_text.strip():
-        body += (
-            "\n\n## Texto reconhecido nas imagens\n\n"
-            "> Conteúdo gerado automaticamente por OCR; valide na imagem original.\n\n"
-            + document.ocr_text.strip()
-        )
     body += (
         "\n\n## Procedência\n\n"
         f"- Fonte: {document.source.upper()}\n"

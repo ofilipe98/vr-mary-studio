@@ -54,7 +54,8 @@ DEFAULT_FONT_SMOOTHING = True
 # available as "native". macOS keeps the legacy fontSmoothing contract.
 DEFAULT_TEXT_RENDERING = "qt" if sys.platform == "win32" else "native"
 TEXT_RENDERING_MODES = ("qt", "native")
-DEFAULT_ENVIRONMENT_IDENTIFICATION = "pill"
+ENVIRONMENT_IDENTIFICATIONS = ("artwork", "none")
+DEFAULT_ENVIRONMENT_IDENTIFICATION = "artwork"
 
 
 def _clamp(val: int, min_v: int, max_v: int) -> int:
@@ -422,7 +423,9 @@ _T3_ROLE_MAP = {
     "chatControl": "toolbarControl", "chatBorder": "border", "chatDivider": "border",
     "messageSurface": "messageSurface", "codeSurface": "codeBackground", "codeHeader": "surfaceRaised",
     "link": "messageAction", "subtleText": "textMuted", "headingText": "text",
-    "inlineCodeSurface": "accentSurface", "quoteSurface": "surface",
+    # T3 `.chat-markdown :not(pre)>code` uses `--muted`, not the accent
+    # surface, so T3-derived themes keep the quiet chip fill.
+    "inlineCodeSurface": "muted", "quoteSurface": "surface",
     "text": "text", "mutedText": "textMuted", "border": "border", "hover": "toolbarControlHover",
     "selection": "secondary", "accentSoft": "accentSurface", "focus": "focus",
     "warning": "warning", "danger": "error", "navText": "sidebarForeground",
@@ -704,8 +707,13 @@ class ThemeManager(QObject):
             if saved_rendering in TEXT_RENDERING_MODES
             else DEFAULT_TEXT_RENDERING
         )
-        self._environment_identification = str(
+        saved_identification = str(
             p.value("appearance/environment_identification", DEFAULT_ENVIRONMENT_IDENTIFICATION) or DEFAULT_ENVIRONMENT_IDENTIFICATION
+        )
+        self._environment_identification = (
+            saved_identification
+            if saved_identification in ENVIRONMENT_IDENTIFICATIONS
+            else DEFAULT_ENVIRONMENT_IDENTIFICATION
         )
         self._word_wrap = bool(
             p.value("appearance/word_wrap", DEFAULT_WORD_WRAP) in (True, "true", "1", 1)
@@ -829,6 +837,7 @@ class ThemeManager(QObject):
                 base_palette[k] = _adjust_contrast(v, self._appearance_contrast, is_dark, is_border, is_text)
 
         base_palette["themeId"] = theme.id
+        base_palette["appearance"] = theme.appearance
         self._palette_cache = base_palette
         return base_palette
 
@@ -850,7 +859,7 @@ class ThemeManager(QObject):
 
     @Slot(str)
     def setEnvironmentIdentification(self, mode: str) -> None:  # noqa: N802
-        if mode not in ("pill", "artwork", "none") or mode == self._environment_identification:
+        if mode not in ENVIRONMENT_IDENTIFICATIONS or mode == self._environment_identification:
             return
         self._environment_identification = mode
         self._preferences.setValue("appearance/environment_identification", mode)

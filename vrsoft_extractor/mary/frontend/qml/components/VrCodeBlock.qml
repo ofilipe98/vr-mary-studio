@@ -54,7 +54,7 @@ Rectangle {
         Rectangle {
             id: headerRow
             width: parent.width
-            height: Theme.scaledGeometry(32)
+            height: Theme.scaledGeometry(30)
             radius: root.radius
             color: Theme.palette.appearance === "light"
                 ? Qt.darker(Theme.palette.codeSurface, 1.05)
@@ -100,10 +100,10 @@ Rectangle {
                 id: wrapButton
                 objectName: "codeBlockWrap"
                 anchors.right: copyButton.left
-                anchors.rightMargin: Theme.scaledGeometry(4)
+                anchors.rightMargin: Theme.scaledGeometry(2)
                 anchors.verticalCenter: parent.verticalCenter
-                implicitWidth: Theme.scaledGeometry(26)
-                implicitHeight: Theme.scaledGeometry(26)
+                implicitWidth: Theme.iconButtonCompact
+                implicitHeight: Theme.iconButtonCompact
                 iconSize: Theme.iconCompact
                 iconKind: "wrapText"
                 checkable: true
@@ -118,10 +118,10 @@ Rectangle {
                 id: copyButton
                 objectName: "codeBlockCopy"
                 anchors.right: parent.right
-                anchors.rightMargin: Theme.scaledGeometry(8)
+                anchors.rightMargin: Theme.scaledGeometry(6)
                 anchors.verticalCenter: parent.verticalCenter
-                implicitWidth: Theme.scaledGeometry(26)
-                implicitHeight: Theme.scaledGeometry(26)
+                implicitWidth: Theme.iconButtonCompact
+                implicitHeight: Theme.iconButtonCompact
                 iconSize: Theme.iconCompact
                 iconKind: root.copied ? "check" : "copy"
                 foreground: root.copied
@@ -136,7 +136,7 @@ Rectangle {
             id: codeViewport
             objectName: "codeViewport"
             width: parent.width
-            height: codeBody.paintedHeight + 20 + (contentWidth > width ? 8 : 0)
+            height: codeBody.paintedHeight + 26 + (contentWidth > width ? 8 : 0)
             contentWidth: wrapButton.checked ? width : Math.max(width, codeBody.paintedWidth + 28)
             contentHeight: height
             clip: true
@@ -149,8 +149,8 @@ Rectangle {
                 width: codeViewport.width
                 leftPadding: Theme.scaledGeometry(14)
                 rightPadding: Theme.scaledGeometry(14)
-                topPadding: Theme.scaledGeometry(10)
-                bottomPadding: Theme.scaledGeometry(10)
+                topPadding: Theme.scaledGeometry(13)
+                bottomPadding: Theme.scaledGeometry(13)
                 text: root.code
                 textFormat: TextEdit.PlainText
                 readOnly: true

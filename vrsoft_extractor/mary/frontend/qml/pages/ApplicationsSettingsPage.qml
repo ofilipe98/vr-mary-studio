@@ -108,7 +108,7 @@ Item {
             }
         }
     }
-    Component.onCompleted: chat.refreshCodeAnalysisReleases()
+    Component.onCompleted: chat.refreshCodeAnalysisReleasesMetadata()
 
     onActiveAppIdChanged: {
         if (!activeAppId && navigationLevel > 0) {
@@ -145,6 +145,52 @@ Item {
                     visible: text.length > 0
                     color: Theme.palette.danger
                     wrapMode: Text.Wrap
+                }
+
+                Rectangle {
+                    objectName: "applicationsCatalogProgressCard"
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    visible: chat.applicationsCatalogLoading
+                    implicitHeight: applicationsCatalogProgressLayout.implicitHeight + Theme.spaceMd
+                    radius: Theme.radiusSmall
+                    color: Theme.palette.codeSurface
+                    border.width: 1
+                    border.color: Theme.palette.chatBorder
+
+                    ColumnLayout {
+                        id: applicationsCatalogProgressLayout
+                        anchors.fill: parent
+                        anchors.margins: Theme.spaceSm
+                        spacing: Theme.spaceXs
+
+                        Text {
+                            objectName: "applicationsCatalogProgressLabel"
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            text: chat.applicationsCatalogStatusText
+                            color: Theme.palette.headingText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSizeCaption
+                            font.weight: Theme.weightMedium
+                            elide: Text.ElideRight
+                            renderType: Theme.textRenderType
+                        }
+
+                        VrProgressBar {
+                            objectName: "applicationsCatalogProgressBar"
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            barHeight: Theme.scaledGeometry(6)
+                            accentColor: Theme.palette.brandOrange
+                            from: 0
+                            to: 100
+                            value: chat.applicationsCatalogProgress
+                            accessibleName: "Progresso do catálogo de aplicativos"
+                            indeterminate: chat.applicationsCatalogLoading
+                                && chat.applicationsCatalogProgressTotal <= 0
+                        }
+                    }
                 }
 
                 Rectangle {
@@ -186,11 +232,12 @@ Item {
                             objectName: "decompiledExportProgressBar"
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            barHeight: 6
+                            barHeight: Theme.scaledGeometry(6)
                             accentColor: Theme.palette.brandOrange
                             from: 0
                             to: 100
                             value: chat.decompiledExportProgress
+                            accessibleName: "Progresso da exportação de código descompilado"
                             indeterminate: chat.decompiledExportRunning && chat.decompiledExportTotal === 0
                         }
                     }
@@ -235,11 +282,12 @@ Item {
                             objectName: "decompiledImportProgressBar"
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            barHeight: 6
+                            barHeight: Theme.scaledGeometry(6)
                             accentColor: Theme.palette.brandOrange
                             from: 0
                             to: 100
                             value: chat.decompiledImportProgress
+                            accessibleName: "Progresso da importação de código descompilado"
                             indeterminate: chat.decompiledImportRunning && chat.decompiledImportTotal === 0
                         }
                     }
@@ -269,7 +317,7 @@ Item {
                                 text: "Aplicativos e versões"
                                 color: Theme.palette.headingText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(17)
+                                font.pixelSize: Theme.fontSizeBody
                                 font.weight: Theme.weightDemiBold
                                 renderType: Theme.textRenderType
                             }
@@ -491,7 +539,7 @@ Item {
                                         ? Theme.palette.danger
                                         : Theme.palette.headingText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(14)
+                                    font.pixelSize: Theme.fontSizeControl
                                     font.weight: Font.DemiBold
                                     wrapMode: Text.WordWrap
                                 }
@@ -506,7 +554,7 @@ Item {
                                             : "Revise os componentes identificados no pacote antes de confirmar a inclusão no catálogo.")
                                     color: Theme.palette.subtleText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeCaption
                                     wrapMode: Text.WordWrap
                                 }
                             }
@@ -534,19 +582,27 @@ Item {
                         }
                     }
 
-                    // Running state progress indicator
+                    // Running state progress indicator; the card header already
+                    // carries the release status text, so the bar only adds the
+                    // real percentage.
                     ColumnLayout {
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
                         visible: chat.applicationImportPreview.state === "running"
-                        spacing: Theme.scaledGeometry(6)
+                        spacing: Theme.spaceXs
 
                         VrProgressBar {
+                            objectName: "applicationImportProgressBar"
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            indeterminate: true
-                            barHeight: 6
+                            barHeight: Theme.scaledGeometry(6)
                             accentColor: Theme.palette.brandOrange
+                            from: 0
+                            to: 100
+                            value: chat.releaseSnapshotProgress
+                            showPercentage: true
+                            accessibleName: "Progresso da importação de aplicativos"
+                            indeterminate: chat.releaseSnapshotProgress <= 0
                         }
                     }
 
@@ -764,7 +820,7 @@ Item {
                                                         text: modelData.application
                                                         color: Theme.palette.headingText
                                                         font.family: Theme.fontFamily
-                                                        font.pixelSize: Theme.fontSize(13)
+                                                        font.pixelSize: Theme.fontSizeControl
                                                         font.weight: Font.DemiBold
                                                         elide: Text.ElideRight
                                                     }
@@ -943,7 +999,7 @@ Item {
 
                     AppearanceRow {
                         title: "Importação direta"
-                        description: "Importe pacotes compactados, JARs avulsos ou pastas já descompiladas para o catálogo."
+                        description: "Importe pacotes compactados, JARs avulsos ou pacotes descompilados para o catálogo."
                         divider: true
 
                         Flow {
@@ -972,20 +1028,6 @@ Item {
                                     var res = chat.selectAndImportSingleJar();
                                     if (res) {
                                         chat.refreshApplicationsCatalog();
-                                    }
-                                }
-                            }
-
-                            VrButton {
-                                text: "Importar código descompilado"
-                                enabled: !chat.releaseSnapshotRunning && !chat.codeProcessingRunning
-                                variant: "secondary"
-                                implicitHeight: Theme.scaledGeometry(32)
-                                onClicked: {
-                                    var det = chat.detectDecompiledDirectory("");
-                                    if (det && det.is_valid) {
-                                        root.decompiledDetectionResult = det;
-                                        decompiledImportDialog.open();
                                     }
                                 }
                             }
@@ -1096,7 +1138,7 @@ Item {
                         }
                         color: Theme.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCaption
                         wrapMode: Text.WordWrap
                     }
 
@@ -1186,7 +1228,7 @@ Item {
                         text: chat.releaseSnapshotStatus
                         color: (text.indexOf("Não foi possível") === 0 || text.indexOf("não encontrada") !== -1 || text.indexOf("não encontrado") !== -1 || text.indexOf("não é um JAR") !== -1 || text.indexOf("mudaram após a prévia") !== -1 || text.indexOf("Erro") === 0) ? Theme.palette.warning : Theme.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCaption
                         wrapMode: Text.WordWrap
                     }
 
@@ -1233,14 +1275,14 @@ Item {
                     Text {
                         text: "›"
                         color: Theme.palette.mutedText
-                        font.pixelSize: Theme.fontSize(14)
+                        font.pixelSize: Theme.fontSizeControl
                     }
 
                     Text {
                         text: root.activeAppId ? (root.activeAppId.toUpperCase()) : ""
                         color: root.navigationLevel === 1 ? Theme.palette.brandOrange : Theme.palette.headingText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(13)
+                        font.pixelSize: Theme.fontSizeControl
                         font.weight: Font.DemiBold
                         MouseArea {
                             anchors.fill: parent
@@ -1254,7 +1296,7 @@ Item {
                         visible: root.navigationLevel >= 2
                         text: "›"
                         color: Theme.palette.mutedText
-                        font.pixelSize: Theme.fontSize(14)
+                        font.pixelSize: Theme.fontSizeControl
                     }
 
                     Text {
@@ -1262,7 +1304,7 @@ Item {
                         text: "Versão: " + root.activeVersion
                         color: Theme.palette.brandOrange
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(13)
+                        font.pixelSize: Theme.fontSizeControl
                         font.weight: Font.DemiBold
                     }
 
@@ -1280,24 +1322,6 @@ Item {
                 spacing: Theme.scaledGeometry(16)
                 visible: root.navigationLevel === 0
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    visible: chat.applicationsCatalogLoading && chat.applicationsCatalog.length > 0
-                    spacing: Theme.scaledGeometry(8)
-                    VrProgressBar {
-                        Layout.fillWidth: true
-                        barHeight: 3
-                        indeterminate: true
-                        accentColor: Theme.palette.brandOrange
-                    }
-                    Text {
-                        text: "Atualizando catálogo…"
-                        color: Theme.palette.mutedText
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
-                    }
-                }
-
                 Text {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
@@ -1310,7 +1334,7 @@ Item {
                         : "Nenhum aplicativo catalogado ainda. Abra Importar e preparar para adicionar um pacote VR, JAR ou código descompilado."
                     color: Theme.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(13)
+                    font.pixelSize: Theme.fontSizeControl
                 }
 
                 VrAppSelector {
@@ -1436,7 +1460,7 @@ Item {
                                 text: "Descompilação e Indexação em Andamento..."
                                 color: Theme.palette.headingText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(13)
+                                font.pixelSize: Theme.fontSizeControl
                                 font.weight: Font.DemiBold
                                 Layout.fillWidth: true
                             }
@@ -1446,7 +1470,7 @@ Item {
                                       chat.codeProcessingCoveredJars + "/" + chat.codeProcessingTotalJars + " JARs"
                                 color: Theme.palette.brandOrange
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(12)
+                                font.pixelSize: Theme.fontSizeCaption
                                 font.weight: Font.DemiBold
                             }
 
@@ -1478,12 +1502,14 @@ Item {
                         }
 
                         VrProgressBar {
+                            objectName: "appsBatchProcessingProgress"
                             Layout.fillWidth: true
-                            barHeight: 6
+                            barHeight: Theme.scaledGeometry(6)
                             accentColor: Theme.palette.brandOrange
                             from: 0
                             to: 100
                             value: Number(chat.codeProcessingProgress) || 0
+                            accessibleName: "Progresso da descompilação e indexação"
                             indeterminate: chat.codeProcessingRunning && (!chat.codeProcessingProgress || chat.codeProcessingProgress === 0)
                         }
                     }
@@ -1621,6 +1647,16 @@ Item {
                                         spacing: Theme.spaceXs
 
                                         VrButton {
+                                            objectName: "usePackageInUltraButton"
+                                            text: "Usar no Ultra"
+                                            variant: "secondary"
+                                            implicitHeight: Theme.scaledGeometry(28)
+                                            enabled: !chat.releaseSnapshotRunning
+                                                && !chat.codeProcessingRunning
+                                            onClicked: chat.requestImportedPackageForUltra(modelData.package_id)
+                                        }
+
+                                        VrButton {
                                             objectName: "exportDecompiledPackageButton"
                                             text: "Exportar pacote descompilado"
                                             variant: "secondary"
@@ -1725,7 +1761,7 @@ Item {
                                         : root.activeAppId
                                     color: Theme.palette.headingText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(17)
+                                    font.pixelSize: Theme.fontSizeBody
                                     font.weight: Theme.weightDemiBold
                                     elide: Text.ElideRight
                                     renderType: Theme.textRenderType
@@ -1795,7 +1831,7 @@ Item {
                                         text: "Versão " + modelData.version
                                         color: Theme.palette.headingText
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(14)
+                                        font.pixelSize: Theme.fontSizeControl
                                         font.weight: Font.DemiBold
                                     }
 
@@ -1835,7 +1871,7 @@ Item {
                                         + " · Origens " + modelData.originCount
                                     color: Theme.palette.subtleText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeCaption
                                 }
                             }
 
@@ -1922,7 +1958,7 @@ Item {
                                         text: "Versão " + root.activeVersion
                                         color: Theme.palette.text
                                         font.family: Theme.fontFamily
-                                        font.pixelSize: Theme.fontSize(17)
+                                        font.pixelSize: Theme.fontSizeBody
                                         font.weight: Theme.weightDemiBold
                                         elide: Text.ElideRight
                                         renderType: Theme.textRenderType
@@ -2049,7 +2085,7 @@ Item {
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
                             visible: root.ultraContextAdded
-                            text: "Contexto atualizado. Ative a análise de código na aba VR Ultra. Outros aplicativos selecionados são mantidos."
+                            text: "Contexto atualizado. A análise de código será ativada automaticamente quando o contexto estiver pronto. Outros aplicativos selecionados são mantidos."
                             color: Theme.palette.mutedText
                             font.family: Theme.fontFamily
                             font.pixelSize: Theme.fontSizeCaption
@@ -2172,7 +2208,7 @@ Item {
                                 text: "Metadados"
                                 color: Theme.palette.headingText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(14)
+                                font.pixelSize: Theme.fontSizeControl
                                 font.weight: Font.DemiBold
                             }
 
@@ -2253,7 +2289,7 @@ Item {
                                 text: "Status de Processamento Local"
                                 color: Theme.palette.headingText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(14)
+                                font.pixelSize: Theme.fontSizeControl
                                 font.weight: Font.DemiBold
                             }
 
@@ -2263,7 +2299,7 @@ Item {
                                 Layout.minimumWidth: 0
                                 text: chat.codeProcessingHardwareSummary || "Modo paralelo automático"
                                 color: Theme.palette.mutedText
-                                font.pixelSize: Theme.fontSize(12)
+                                font.pixelSize: Theme.fontSizeCaption
                                 wrapMode: Text.Wrap
                             }
 
@@ -2273,7 +2309,7 @@ Item {
                                 Layout.minimumWidth: 0
                                 text: "Origem da tarefa: " + (chat.codeAnalysisRelease || "—") + "\n" + chat.codeProcessingStatus
                                 color: Theme.palette.text
-                                font.pixelSize: Theme.fontSize(12)
+                                font.pixelSize: Theme.fontSizeCaption
                                 wrapMode: Text.Wrap
                             }
 
@@ -2292,7 +2328,7 @@ Item {
                                         + chat.codeProcessingCoveredJars + "/"
                                         + chat.codeProcessingTotalJars + " JARs"
                                     color: Theme.palette.text
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeCaption
                                     font.weight: Font.Medium
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
@@ -2339,11 +2375,12 @@ Item {
                             VrProgressBar {
                                 objectName: "vrUltraCodeProcessingProgress"
                                 Layout.fillWidth: true
-                                barHeight: 6
+                                barHeight: Theme.scaledGeometry(6)
                                 accentColor: Theme.palette.brandOrange
                                 from: 0
                                 to: 100
                                 value: chat.codeProcessingProgress
+                                accessibleName: "Progresso do processamento de código"
                                 indeterminate: chat.codeProcessingRunning && chat.codeProcessingProgress === 0
                             }
 
@@ -2417,7 +2454,7 @@ Item {
                                 Text {
                                     text: "Memória Máxima da JVM"
                                     color: Theme.palette.text
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeCaption
                                 }
                                 VrComboBox {
                                     id: heapPicker
@@ -2437,7 +2474,7 @@ Item {
                                 Text {
                                     text: "Timeout do Lote"
                                     color: Theme.palette.text
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeCaption
                                 }
                                 VrComboBox {
                                     id: timeoutPicker
@@ -2457,7 +2494,7 @@ Item {
                                 Text {
                                     text: "Núcleos de CPU"
                                     color: Theme.palette.text
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeCaption
                                 }
                                 VrComboBox {
                                     id: cpuPicker
@@ -2477,7 +2514,7 @@ Item {
                                 Text {
                                     text: "Multiplicador de Disco"
                                     color: Theme.palette.text
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeCaption
                                 }
                                 VrComboBox {
                                     id: diskPicker
@@ -2497,7 +2534,7 @@ Item {
                                 Text {
                                     text: "Janela de Processamento"
                                     color: Theme.palette.text
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeCaption
                                 }
                                 VrComboBox {
                                     id: windowPicker
@@ -2517,7 +2554,7 @@ Item {
                                 Text {
                                     text: "Lote para repetir"
                                     color: Theme.palette.text
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeCaption
                                 }
                                 VrComboBox {
                                     id: retryPicker
@@ -2608,7 +2645,7 @@ Item {
                                 text: "Comparar Versão " + root.activeVersion + " com outra versão"
                                 color: Theme.palette.headingText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(14)
+                                font.pixelSize: Theme.fontSizeControl
                                 font.weight: Font.DemiBold
                             }
 
@@ -2622,7 +2659,7 @@ Item {
                                 Text {
                                     text: "Versão de destino:"
                                     color: Theme.palette.text
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeCaption
                                 }
 
                                 VrComboBox {
@@ -3342,7 +3379,7 @@ Item {
                                 text: "Pacotes que contêm esta versão"
                                 color: Theme.palette.headingText
                                 font.family: Theme.fontFamily
-                                font.pixelSize: Theme.fontSize(14)
+                                font.pixelSize: Theme.fontSizeControl
                                 font.weight: Font.DemiBold
                             }
 
@@ -3422,7 +3459,7 @@ Item {
                     + "Bancos compartilhados, releases ativas e JARs de origem serão preservados."
                 color: Theme.palette.headingText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(13)
+                font.pixelSize: Theme.fontSizeControl
                 wrapMode: Text.WordWrap
             }
             RowLayout {
@@ -3470,7 +3507,7 @@ Item {
                 text: "Deseja remover o pacote '" + (root.pendingUnlinkPackageName || root.pendingUnlinkPackageId) + "' do catálogo de aplicativos?\nOs JARs de origem serão preservados."
                 color: Theme.palette.headingText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(13)
+                font.pixelSize: Theme.fontSizeControl
                 wrapMode: Text.WordWrap
             }
 
@@ -3553,7 +3590,7 @@ Item {
                 text: "Digite o novo nome para o pacote selecionado:"
                 color: Theme.palette.headingText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(13)
+                font.pixelSize: Theme.fontSizeControl
             }
             VrTextField {
                 id: renamePackageInput
@@ -3604,7 +3641,7 @@ Item {
                     + "O código já descompilado e o índice no VRStudio continuarão funcionando normalmente e preservados."
                 color: Theme.palette.headingText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(13)
+                font.pixelSize: Theme.fontSizeControl
                 wrapMode: Text.WordWrap
             }
             RowLayout {
@@ -3639,17 +3676,16 @@ Item {
         anchors.centerIn: parent
         width: Math.min(540, root.width - Theme.spaceLg * 2)
         modal: true
-        title: "Importar Código Descompilado"
+        title: "Importar Pacote Descompilado"
         standardButtons: Dialog.NoButton
         contentItem: ColumnLayout {
             spacing: Theme.spaceMd
             Text {
                 Layout.fillWidth: true
-                visible: !!(root.decompiledDetectionResult && root.decompiledDetectionResult.portable_package)
                 text: "Pacote portátil VRStudio (.zip)"
                 color: Theme.palette.brandOrange
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(13)
+                font.pixelSize: Theme.fontSizeControl
                 font.weight: Font.DemiBold
                 wrapMode: Text.WordWrap
             }
@@ -3660,13 +3696,11 @@ Item {
                     "Fontes detectados com sucesso!\n" +
                     "Aplicativos: " + (root.decompiledDetectionResult.applications ? root.decompiledDetectionResult.applications.length : 0) +
                     " · Total de arquivos Java: " + (root.decompiledDetectionResult.total_java_files || 0) + "\n" +
-                    (root.decompiledDetectionResult.portable_package
-                        ? "Arquivo: " + (root.decompiledDetectionResult.source_archive || "")
-                        : "Diretório: " + (root.decompiledDetectionResult.source_root || ""))
+                    "Arquivo: " + (root.decompiledDetectionResult.source_archive || "")
                 ) : ""
                 color: Theme.palette.headingText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(13)
+                font.pixelSize: Theme.fontSizeControl
                 wrapMode: Text.WordWrap
             }
             Text {
@@ -3674,7 +3708,7 @@ Item {
                 text: "O código será indexado diretamente no VRStudio para buscas e análise sem necessitar de descompilador."
                 color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(12)
+                font.pixelSize: Theme.fontSizeCaption
                 wrapMode: Text.WordWrap
             }
             RowLayout {
@@ -3691,11 +3725,7 @@ Item {
                         var res = root.decompiledDetectionResult;
                         decompiledImportDialog.close();
                         if (!res) return;
-                        if (res.portable_package === true) {
-                            chat.importDecompiledPackageArchive(res.source_archive, res.suggested_release_id || "", res.suggested_name || "");
-                        } else if (res.source_root) {
-                            chat.importDecompiledDirectory(res.source_root, res.suggested_release_id || "", res.suggested_name || "");
-                        }
+                        chat.importDecompiledPackageArchive(res.source_archive, res.suggested_release_id || "", res.suggested_name || "");
                     }
                 }
             }
@@ -3725,7 +3755,7 @@ Item {
                 text: "Configurações globais de JVM, limites de tempo e paralelismo aplicados na descompilação e indexação em lote dos arquivos JAR."
                 color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSize(12)
+                font.pixelSize: Theme.fontSizeCaption
                 wrapMode: Text.WordWrap
             }
 
@@ -3755,7 +3785,7 @@ Item {
                             text: "Alocação do Processador e Memória"
                             color: Theme.palette.headingText
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(12)
+                            font.pixelSize: Theme.fontSizeCaption
                             font.weight: Font.DemiBold
                         }
                     }
@@ -3785,7 +3815,7 @@ Item {
                         text: "Memória Máxima da JVM"
                         color: Theme.palette.headingText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCaption
                         font.weight: Font.Medium
                     }
                     VrComboBox {
@@ -3816,7 +3846,7 @@ Item {
                         text: "Timeout do Lote"
                         color: Theme.palette.headingText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCaption
                         font.weight: Font.Medium
                     }
                     VrComboBox {
@@ -3847,7 +3877,7 @@ Item {
                         text: "Núcleos de CPU / Concorrência"
                         color: Theme.palette.headingText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCaption
                         font.weight: Font.Medium
                     }
                     VrComboBox {
@@ -3878,7 +3908,7 @@ Item {
                         text: "Multiplicador de Disco"
                         color: Theme.palette.headingText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCaption
                         font.weight: Font.Medium
                     }
                     VrComboBox {
@@ -3910,7 +3940,7 @@ Item {
                     text: "Janela de Processamento"
                     color: Theme.palette.headingText
                     font.family: Theme.fontFamily
-                    font.pixelSize: Theme.fontSize(12)
+                    font.pixelSize: Theme.fontSizeCaption
                     font.weight: Font.Medium
                 }
                 VrComboBox {
@@ -3951,6 +3981,128 @@ Item {
             border.width: 1
             border.color: Theme.palette.chatBorder
             radius: Theme.radiusPopup
+        }
+    }
+
+    Loader {
+        id: importedPackageUltraChoiceLoader
+        anchors.fill: parent
+        active: (chat.pendingImportedPackageForUltra.packageId || "").length > 0
+        sourceComponent: importedPackageUltraChoiceComponent
+    }
+
+    Component {
+        id: importedPackageUltraChoiceComponent
+
+        Dialog {
+            id: importedPackageUltraChoiceDialog
+            objectName: "importedPackageUltraChoiceDialog"
+            anchors.centerIn: parent
+            width: Math.min(540, root.width - Theme.spaceLg * 2)
+            modal: true
+            closePolicy: Popup.NoAutoClose
+            title: "Usar o pacote importado no VR Ultra?"
+            standardButtons: Dialog.NoButton
+
+            readonly property string packageId: chat.pendingImportedPackageForUltra.packageId || ""
+            readonly property int applicationCount: chat.pendingImportedPackageForUltra.applicationCount || 0
+            readonly property string packageName: chat.pendingImportedPackageForUltra.packageName || ""
+            visible: packageId.length > 0
+
+            contentItem: ColumnLayout {
+                spacing: Theme.spaceMd
+
+                Text {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    text: importedPackageUltraChoiceDialog.packageName
+                    color: Theme.palette.headingText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeControl
+                    font.weight: Font.DemiBold
+                    wrapMode: Text.WordWrap
+                }
+
+                Text {
+                    objectName: "importedPackageUltraChoiceSummary"
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    text: importedPackageUltraChoiceDialog.applicationCount
+                        + " aplicativo(s) nesta composição importada."
+                    color: Theme.palette.brandOrange
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeControl
+                    wrapMode: Text.WordWrap
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    text: "Pacote completo usa todos estes aplicativos como escopo principal do VR Ultra, substituindo a seleção atual."
+                    color: Theme.palette.headingText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeCaption
+                    wrapMode: Text.WordWrap
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    text: "Escolher por aplicativo mantém a seleção manual atual."
+                    color: Theme.palette.mutedText
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeCaption
+                    wrapMode: Text.WordWrap
+                }
+
+                Text {
+                    objectName: "importedPackageUltraChoiceError"
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    visible: text.length > 0
+                    text: chat.pendingImportedPackageForUltra.error || ""
+                    color: Theme.palette.warning
+                    font.family: Theme.fontFamily
+                    font.pixelSize: Theme.fontSizeCaption
+                    wrapMode: Text.WordWrap
+                }
+
+                Flow {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    Layout.preferredHeight: childrenRect.height
+                    spacing: Theme.spaceSm
+
+                    VrButton {
+                        objectName: "chooseImportedPackageAppsButton"
+                        text: "Escolher por aplicativo"
+                        variant: "secondary"
+                        onClicked: {
+                            chat.dismissImportedPackageUltraChoice(importedPackageUltraChoiceDialog.packageId)
+                            root.navigationLevel = 0
+                            root.importToolsExpanded = false
+                        }
+                    }
+
+                    VrButton {
+                        objectName: "useImportedPackageInUltraButton"
+                        text: "Usar pacote completo"
+                        variant: "primary"
+                        onClicked: {
+                            var pendingPackageId = importedPackageUltraChoiceDialog.packageId
+                            if (chat.useImportedPackageInUltra(pendingPackageId))
+                                importedPackageUltraChoiceDialog.close()
+                        }
+                    }
+                }
+            }
+
+            background: Rectangle {
+                color: Theme.palette.surface
+                border.width: 1
+                border.color: Theme.palette.brandOrange
+                radius: Theme.radiusSmall
+            }
         }
     }
 }

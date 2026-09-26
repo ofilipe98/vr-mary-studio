@@ -369,6 +369,8 @@ class ConversationsDomain:
         if index <= 0 or index >= len(self._projects):
             return False
         target = Path(self._projects[index]["path"]).resolve(strict=False)
+        if target == Path(self._settings.root).resolve(strict=False):
+            return False
         hidden = self._stored_project_paths("chat/hidden_projects")
         if target not in hidden:
             hidden.append(target)
@@ -382,7 +384,7 @@ class ConversationsDomain:
             if Path(item["path"]).expanduser().resolve(strict=False) != target
         ]
         self._store_project_entries(values)
-        self._preferences.setValue("chat/current_project", "")
+        self._preferences.remove("chat/current_project")
         self._preferences.sync()
         self._refresh_projects()
         self.refresh()
@@ -1024,6 +1026,7 @@ class ConversationsDomain:
         custom_colors: dict[Path, str] = {}
         custom_texts: dict[Path, str] = {}
         hidden_paths = set(self._stored_project_paths("chat/hidden_projects"))
+        hidden_paths.discard(Path(self._settings.root).resolve(strict=False))
 
         def include(
             value: object,
@@ -1116,7 +1119,8 @@ class ConversationsDomain:
             }
             for path in candidates[:32]
         )
-        self._current_project_index = next(
+        has_saved_scope = bool(self._preferences.contains("chat/current_project"))
+        matched_index = next(
             (
                 index
                 for index, item in enumerate(self._projects)
@@ -1125,8 +1129,23 @@ class ConversationsDomain:
                 and Path(item["path"]).resolve(strict=False)
                 == Path(saved_scope).expanduser().resolve(strict=False)
             ),
-            0,
+            -1,
         )
+        if matched_index >= 0:
+            self._current_project_index = matched_index
+        elif has_saved_scope and not saved_scope:
+            self._current_project_index = 0
+        else:
+            root_path = Path(self._settings.root).resolve(strict=False)
+            self._current_project_index = next(
+                (
+                    index
+                    for index, item in enumerate(self._projects)
+                    if item["path"]
+                    and Path(item["path"]).resolve(strict=False) == root_path
+                ),
+                0,
+            )
         selected_path = self._projects[self._current_project_index]["path"]
         self._project_scope = (
             Path(selected_path).resolve(strict=False) if selected_path else None

@@ -173,7 +173,7 @@ Item {
             }
             VrButton { text: "Limpar seleção"; enabled: studio.reviewSelectionCount > 0; onClicked: studio.setAllReviewsSelected(false) }
             Item { Layout.fillWidth: true }
-            Text { text: studio.reviewSelectionCount + " selecionados"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+            Text { text: studio.reviewSelectionCount + " selecionados"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
         }
 
         SplitView {
@@ -305,14 +305,14 @@ Item {
                     anchors.fill: parent
                     anchors.margins: Theme.scaledGeometry(12)
                     spacing: Theme.scaledGeometry(8)
-                    Text { Layout.fillWidth: true; text: studio.reviewTitle; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(16); font.weight: Font.DemiBold; elide: Text.ElideRight }
+                    Text { Layout.fillWidth: true; text: studio.reviewTitle; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeBody; font.weight: Font.DemiBold; elide: Text.ElideRight }
                     // Narrow mode hides secondary table columns; the detail
                     // preview markdown already carries fonte/produto/categoria/
                     // confiança/atualização, keeping them accessible.
                     ScrollView {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        TextEdit { id: reviewPreviewBody; width: parent.width; text: studio.reviewPreview; textFormat: TextEdit.MarkdownText; readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); onTextChanged: frontend.styleMessageDocument(reviewPreviewBody.textDocument, studio.reviewPreview) }
+                        TextEdit { id: reviewPreviewBody; width: parent.width; text: studio.reviewPreview; textFormat: TextEdit.MarkdownText; readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeControl; onTextChanged: frontend.styleMessageDocument(reviewPreviewBody.textDocument, studio.reviewPreview) }
                     }
                     RowLayout {
                         Layout.fillWidth: true
@@ -323,7 +323,7 @@ Item {
                     VrTextArea { id: reviewNote; Layout.fillWidth: true; Layout.preferredHeight: Theme.scaledGeometry(72); placeholderText: "Observação da revisão" }
                     RowLayout {
                         Layout.fillWidth: true
-                        Text { text: "Destino:"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(12) }
+                        Text { text: "Destino:"; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }
                         VrComboBox { id: destinationModule; Layout.fillWidth: true; model: ["Fiscal", "ADM_FIN_ESTOQUE", "PDV", "Multimodulo", "Revisar"] }
                     }
                     GridLayout {
@@ -341,7 +341,7 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             VrButton { text: "< Anterior"; enabled: studio.reviewCanPrevious; onClicked: studio.previousReviewPage() }
-            Text { text: studio.reviewPageLabel; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSize(13); font.weight: Font.DemiBold }
+            Text { text: studio.reviewPageLabel; color: frontend.palette.text; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeControl; font.weight: Font.DemiBold }
             VrButton { text: "Próxima >"; enabled: studio.reviewCanNext; onClicked: studio.nextReviewPage() }
             Item { Layout.fillWidth: true }
             Text { visible: !root.isNarrow; text: studio.reviewTotal ? studio.reviewTotal + " itens" : "Nenhum item"; color: frontend.palette.mutedText; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeCaption }

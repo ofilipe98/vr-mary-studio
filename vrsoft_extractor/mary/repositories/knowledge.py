@@ -25,8 +25,10 @@ from .common import (
     _escape_like,
     _review_signature,
     _fts_query,
+    _document_fts_query,
     _last_insert_id,
     _fts_and_query,
+    _document_fts_and_query,
     _score_search_row,
     _score_search_rows,
     _expand_reference_results,
@@ -61,7 +63,18 @@ class KnowledgeRepositoryMixin:
         return tuple(str(row["source_origin"]) for row in rows)
 
 
-    def upsert_document(self, document: KnowledgeDocument) -> tuple[int, str]:
+    def upsert_document(
+        self,
+        document: KnowledgeDocument,
+        *,
+        preserve_local_review: bool = True,
+    ) -> tuple[int, str]:
+        """Persist one document.
+
+        ``preserve_local_review=False`` is the explicit restore contract: the
+        incoming module and review_status overwrite a local approved/kept
+        decision instead of being protected by the conflict rules.
+        """
         if self.root:
             document.local_path = to_portable_path(self.root, document.local_path)
             document.assets = [
@@ -117,7 +130,7 @@ class KnowledgeRepositoryMixin:
                     updated_at=excluded.updated_at,
                     synced_at=excluded.synced_at,revision=excluded.revision,
                     content_hash=excluded.content_hash,markdown=excluded.markdown,
-                    ocr_text=excluded.ocr_text,local_path=excluded.local_path,
+                    ocr_text='',local_path=excluded.local_path,
                     assets_json=excluded.assets_json""",
                 (
                     document.source,
@@ -137,11 +150,22 @@ class KnowledgeRepositoryMixin:
                     document.revision,
                     document.content_hash,
                     document.markdown,
-                    document.ocr_text,
+                    "",
                     document.local_path,
                     json.dumps(document.assets, ensure_ascii=False),
                 ),
             )
+            if not preserve_local_review:
+                connection.execute(
+                    """UPDATE documents SET module=?,review_status=?
+                        WHERE source=? AND source_id=?""",
+                    (
+                        document.module,
+                        document.review_status,
+                        document.source,
+                        document.source_id,
+                    ),
+                )
             row = connection.execute(
                 "SELECT id FROM documents WHERE source=? AND source_id=?",
                 (document.source, document.source_id),
@@ -173,7 +197,6 @@ class KnowledgeRepositoryMixin:
         chunks = split_knowledge_document(
             document.title,
             document.markdown,
-            document.ocr_text,
             source=document.source,
         )
         connection.execute(
@@ -406,7 +429,6 @@ class KnowledgeRepositoryMixin:
                            d.content_hash AS document_content_hash,
                            d.category AS document_category,
                            d.product AS document_product,
-                           d.ocr_text AS document_ocr_text,
                            d.local_path AS document_local_path,
                            d.assets_json AS document_assets_json
                     FROM classification_reviews r
@@ -569,7 +591,6 @@ class KnowledgeRepositoryMixin:
             category=str(review["document_category"] or ""),
             product=str(review["document_product"] or ""),
             assets=[str(asset) for asset in assets],
-            ocr_text=str(review["document_ocr_text"] or ""),
             local_path=str(review["document_local_path"] or ""),
         )
 
@@ -667,8 +688,7 @@ class KnowledgeRepositoryMixin:
             where.append(
                 """lower(
                      d.title || ' ' || d.source_id || ' ' || d.product || ' ' ||
-                     d.category || ' ' || r.reasons_json || ' ' || d.markdown ||
-                     ' ' || d.ocr_text
+                     d.category || ' ' || r.reasons_json || ' ' || d.markdown
                    ) LIKE ? ESCAPE '\\'"""
             )
             params.append(needle)
@@ -729,7 +749,7 @@ class KnowledgeRepositoryMixin:
                 f"""SELECT r.*,d.source_id,d.title,d.source,d.source_origin,d.url,
                            d.module AS current_module,d.review_status,
                            d.category,d.product,d.created_at,d.updated_at AS document_updated_at,
-                           d.synced_at,d.markdown,d.ocr_text,d.local_path,d.assets_json,
+                           d.synced_at,d.markdown,d.local_path,d.assets_json,
                            CASE WHEN EXISTS(
                              SELECT 1 FROM classification_reviews newer
                              WHERE newer.document_id=r.document_id AND newer.id>r.id
@@ -802,7 +822,6 @@ class KnowledgeRepositoryMixin:
                     title=str(row["title"]),
                     url=str(row["url"]),
                     markdown=str(row["markdown"]),
-                    ocr_text=str(row["ocr_text"]),
                     module=str(row["module"]),
                     product=str(row["product"]),
                     category=str(row["category"]),
@@ -906,7 +925,6 @@ class KnowledgeRepositoryMixin:
                     if value
                 ),
                 "markdown": str(raw.get("content") or ""),
-                "ocr_text": "",
             }
             candidate = _score_search_row(
                 candidate_row,
@@ -1046,7 +1064,11 @@ class KnowledgeRepositoryMixin:
         exact_limit = max(60, min(240, int(limit) * 10))
         broad_limit = max(140, min(500, int(limit) * 24))
         sql = f"""
-            SELECT d.*,bm25(knowledge_fts,8.0,1.0,0.8,2.0,1.5,1.5) AS rank
+            SELECT d.id,d.source,d.source_origin,d.source_id,d.title,d.url,
+                   d.module,d.classification_confidence,d.review_status,d.status,
+                   d.category,d.product,d.created_at,d.updated_at,d.synced_at,
+                   d.revision,d.content_hash,d.markdown,d.local_path,d.assets_json,
+                   bm25(knowledge_fts,8.0,1.0,0.8,2.0,1.5,1.5) AS rank
               FROM knowledge_fts
               JOIN documents d ON d.id=knowledge_fts.rowid
              WHERE knowledge_fts MATCH ? AND {' AND '.join(filters)}
@@ -1054,9 +1076,10 @@ class KnowledgeRepositoryMixin:
         """
         rows_by_id: dict[int, dict[str, Any]] = {}
         with self.connect() as connection:
-            params = [_fts_and_query(terms), *filter_params, exact_limit]
+            params = [_document_fts_and_query(terms), *filter_params, exact_limit]
             for row in connection.execute(sql, params).fetchall():
-                rows_by_id[int(row["id"])] = dict(row)
+                candidate = dict(row)
+                rows_by_id[int(candidate["id"])] = candidate
             results = _score_search_rows(rows_by_id.values(), terms)
             _expand_reference_results(
                 connection,
@@ -1066,9 +1089,10 @@ class KnowledgeRepositoryMixin:
                 filter_params,
             )
             if len(results) < max(1, int(limit)):
-                params = [_fts_query(query), *filter_params, broad_limit]
+                params = [_document_fts_query(query), *filter_params, broad_limit]
                 for row in connection.execute(sql, params).fetchall():
-                    rows_by_id.setdefault(int(row["id"]), dict(row))
+                    candidate = dict(row)
+                    rows_by_id.setdefault(int(candidate["id"]), candidate)
                 results = _score_search_rows(rows_by_id.values(), terms)
                 _expand_reference_results(
                     connection,
@@ -1086,7 +1110,7 @@ class KnowledgeRepositoryMixin:
         selected = results[: max(1, int(limit))]
         for result in selected:
             result["excerpt"] = search_excerpt(
-                result.get("markdown") or str(result.get("ocr_text") or ""),
+                result.get("markdown") or "",
                 terms,
             )
         return selected
@@ -1135,7 +1159,7 @@ class KnowledgeRepositoryMixin:
             filters.append(f"d.source NOT IN ({placeholders})")
             filter_params.extend(ignored)
         where = " AND ".join(filters)
-        match_query = _fts_query(query)
+        match_query = _document_fts_query(query)
         page_limit = max(1, int(limit))
         page_offset = max(0, int(offset))
         with self.connect() as connection:
@@ -1149,7 +1173,11 @@ class KnowledgeRepositoryMixin:
                 ).fetchone()[0]
             )
             rows = connection.execute(
-                f"""SELECT d.*,bm25(knowledge_fts,8.0,1.0,0.8,2.0,1.5,1.5) AS rank
+                f"""SELECT d.id,d.source,d.source_origin,d.source_id,d.title,d.url,
+                              d.module,d.classification_confidence,d.review_status,d.status,
+                              d.category,d.product,d.created_at,d.updated_at,d.synced_at,
+                              d.revision,d.content_hash,d.markdown,d.local_path,d.assets_json,
+                              bm25(knowledge_fts,8.0,1.0,0.8,2.0,1.5,1.5) AS rank
                       FROM knowledge_fts
                       JOIN documents d ON d.id=knowledge_fts.rowid
                      WHERE knowledge_fts MATCH ? AND {where}
@@ -1160,7 +1188,7 @@ class KnowledgeRepositoryMixin:
         results = [dict(row) for row in rows]
         for result in results:
             result["excerpt"] = search_excerpt(
-                result.get("markdown") or str(result.get("ocr_text") or ""),
+                result.get("markdown") or "",
                 terms,
             )
         return results, total

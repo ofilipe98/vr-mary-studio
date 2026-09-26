@@ -129,7 +129,7 @@ def main():
             page = window.findChild(QObject, "settingsPage")
             assert page is not None, "settingsPage not found"
 
-            tab_names = ["0_geral", "1_provedores", "2_vr_ultra", "3_aplicativos", "4_aparencia", "5_browser", "6_arquivados", "7_skills"]
+            tab_names = ["0_geral", "1_provedores", "2_vr_ultra", "3_aplicativos", "4_aparencia", "5_browser", "6_arquivados", "7_skills", "8_wiki_kb"]
 
             scenarios = [(1280, 820, "100"), (1280, 820, "125"), (1920, 1080, "100"), (768, 1024, "100"), (390, 844, "100"), (390, 844, "125"), (1280, 820, "150")]
             captures = []
@@ -143,7 +143,7 @@ def main():
                         page.setProperty("tabIndex", idx)
                         QTest.qWait(120)
                         app.processEvents()
-                        scroll_name = {0: "generalScroll", 2: "vrUltraSettingsScroll", 3: "appsSettingsScroll", 4: "appearanceSettingsScroll", 5: "browserSettingsScroll"}.get(idx)
+                        scroll_name = {0: "generalScroll", 2: "vrUltraSettingsScroll", 3: "appsSettingsScroll", 4: "appearanceSettingsScroll", 5: "browserSettingsScroll", 8: "knowledgeTransferScroll"}.get(idx)
                         scroll = window.findChild(QObject, scroll_name) if scroll_name else None
                         flick = scroll.property("contentItem") if scroll else None
                         if flick:
@@ -251,8 +251,6 @@ def main():
                             if not source_interaction_checked:
                                 copy_source = window.findChild(QObject, "copyApplicationSourceButton")
                                 assert copy_source is not None
-                                copy_source.clicked.emit()
-                                assert QApplication.clipboard().text() == chat.applicationSources["body"]
                                 clean_mode = window.findChild(QObject, "applicationSourceCleanModeButton")
                                 raw_mode = window.findChild(QObject, "applicationSourceRawModeButton")
                                 view_note = window.findChild(QObject, "applicationSourceViewNote")
@@ -267,12 +265,14 @@ def main():
                                 assert chat.applicationSources.get("clean_available") is True
                                 assert view_note.property("visible")
                                 assert body_area.property("text") == chat.applicationSources.get("clean_body", "")
+                                copy_source.clicked.emit()
+                                wait_for(lambda: QApplication.clipboard().text() == body_area.property("text"))
                                 raw_mode.clicked.emit()
-                                QTest.qWait(30)
-                                assert body_area.property("text") == chat.applicationSources.get("body", "")
+                                wait_for(lambda: body_area.property("text") == chat.applicationSources.get("body", ""))
+                                copy_source.clicked.emit()
+                                wait_for(lambda: QApplication.clipboard().text() == chat.applicationSources.get("body", ""))
                                 clean_mode.clicked.emit()
-                                QTest.qWait(30)
-                                assert body_area.property("text") == chat.applicationSources.get("clean_body", "")
+                                wait_for(lambda: body_area.property("text") == chat.applicationSources.get("clean_body", ""))
                                 source_interaction_checked = True
                                 QTest.qWait(2600)
                         panel_name = ["summary", "processing", "comparison", "origins", "code"][panel]
@@ -324,10 +324,10 @@ def main():
             frontend.setUiScale("100")
             page.setProperty("tabIndex", 2)
             QTest.qWait(80)
-            toggle = window.findChild(QObject, "vrUltraSeniorProfileToggle")
+            toggle = window.findChild(QObject, "vrUltraExpertProfileToggle")
             toggle.forceActiveFocus()
             QTest.keyClick(window, Qt.Key_Space)
-            assert chat.seniorProfileEnabled
+            assert chat.expertProfileEnabled
             picker = window.findChild(QObject, "vrUltraResponseModePicker")
             picker.activated.emit(2)
             assert chat.vrResponseMode == "support"

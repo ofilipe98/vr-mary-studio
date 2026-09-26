@@ -7,7 +7,32 @@ Button {
     id: control
 
     function openPicker() {
+        control.refreshPlacement()
         pickerPopup.open()
+    }
+
+    function togglePopup() {
+        if (pickerPopup.opened) {
+            pickerPopup.close()
+            return
+        }
+        control.openPicker()
+    }
+
+    // T3 (Base UI Positioner) prefers opening below and flips up only when the
+    // popup does not fit. QML cannot track mapToItem() inside a binding, so the
+    // trigger position is captured whenever the popup opens or the window
+    // resizes; otherwise the placement math runs on a stale composer position.
+    property real sceneTop: 0
+    readonly property real popupGap: Theme.scaledGeometry(8)
+
+    function refreshPlacement() {
+        sceneTop = control.mapToItem(null, 0, 0).y
+    }
+
+    Connections {
+        target: Theme
+        function onViewportHeightChanged() { control.refreshPlacement() }
     }
 
     property var model: []
@@ -18,12 +43,22 @@ Button {
     readonly property var frontierItems: filteredItems(false)
     readonly property var legacyItems: filteredItems(true)
     readonly property var visibleItems: showingLegacy ? legacyItems : frontierItems
-    property bool popupAbove: true
+    property bool popupAbove: false
     property bool outlined: false
     readonly property var currentItem: currentIndex >= 0 && currentIndex < model.length
         ? model[currentIndex] : ({})
     signal activated(int index)
     signal favoriteToggled(int index)
+
+    // T3 keeps the model list on a neutral overlay: selected rows lighten the
+    // popup surface instead of tinting it with the brand accent.
+    readonly property color rowHighlight: frontend.resolvedAppearance === "light"
+        ? Qt.rgba(0, 0, 0, 0.05) : Qt.rgba(1, 1, 1, 0.09)
+    readonly property color rowHover: frontend.resolvedAppearance === "light"
+        ? Qt.rgba(0, 0, 0, 0.035) : Qt.rgba(1, 1, 1, 0.05)
+    // Favorites keep T3's yellow-500 star in every theme; the palette accent
+    // stays reserved for the provider rail and the selection chrome.
+    readonly property color favoriteColor: Theme.palette.brandYellow || "#eab308"
 
     property bool compact: false
     implicitWidth: compact
@@ -36,7 +71,7 @@ Button {
     hoverEnabled: true
     transformOrigin: Item.Center
     scale: !frontend.reduceMotion && control.down ? 0.97 : 1
-    onClicked: pickerPopup.opened ? pickerPopup.close() : pickerPopup.open()
+    onClicked: control.togglePopup()
 
     Behavior on scale {
         enabled: !frontend.reduceMotion
@@ -54,9 +89,9 @@ Button {
         Text {
             Layout.fillWidth: !control.compact
             text: control.currentItem.displayName || control.currentItem.label || "Modelo"
-            color: control.compact
-                ? (control.hovered || pickerPopup.opened ? Theme.palette.text : Theme.palette.mutedText)
-                : (control.hovered || pickerPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8"))
+            // Keep the active model readable at rest: the composer control is
+            // filled, so the label no longer depends on hover to gain contrast.
+            color: Theme.palette.text
             font.family: Theme.fontFamily
             font.pixelSize: control.compact ? Theme.fontSizeCaption : Theme.fontSizeControl
             renderType: Theme.textRenderType
@@ -67,16 +102,19 @@ Button {
             Layout.preferredWidth: Theme.iconMicro
             Layout.preferredHeight: Theme.iconMicro
             kind: "chevronDown"
-            foreground: control.hovered || pickerPopup.opened ? (Theme.palette.headingText || "#FFFFFF") : (Theme.palette.subtleText || "#8f9ca8")
+            foreground: Theme.palette.mutedText
         }
     }
 
     background: Rectangle {
-        radius: control.compact ? 6 : 6
+        radius: Theme.scaledGeometry(6)
+        // Ghost control like the T3 composer: no chrome at rest, only the
+        // hover/open tint; focus keeps an accessibility ring.
         color: control.down || control.hovered || pickerPopup.opened
-            ? Qt.rgba(255, 255, 255, 0.07) : (control.outlined ? Theme.palette.chatControl : "transparent")
-        border.width: control.outlined || control.activeFocus || pickerPopup.opened ? 1 : 0
-        border.color: control.activeFocus ? Theme.palette.focus : Theme.palette.chatBorder
+            ? Theme.palette.hover : "transparent"
+        // Ring only for keyboard focus; mouse clicks stay chrome-free like T3.
+        border.width: control.visualFocus ? 1 : 0
+        border.color: Theme.palette.focus
         Behavior on color {
             enabled: !frontend.reduceMotion
             ColorAnimation { duration: Theme.fastDuration }
@@ -87,10 +125,20 @@ Button {
         id: pickerPopup
         objectName: "modelPickerPopup"
         parent: control
+        // T3 keeps the model list tall (max-h-86.5 ≈ 346px) and scrolls the
+        // rows; the popup flips up when it does not fit below and never leaves
+        // the window — the height caps to the available side.
+        readonly property real naturalHeight: Theme.scaledGeometry(346)
+        readonly property real spaceBelow: Theme.viewportHeight
+            - control.sceneTop - control.height - control.popupGap
+        readonly property real spaceAbove: control.sceneTop - control.popupGap
+        readonly property bool openAbove: control.popupAbove
+            || (naturalHeight > spaceBelow && spaceAbove > spaceBelow)
         x: 0
-        y: control.popupAbove ? -height - 8 : control.height + 8
-        width: Math.min(420, Theme.viewportWidth - 24)
-        height: Theme.scaledGeometry(400)
+        y: openAbove ? -height - control.popupGap : control.height + control.popupGap
+        width: Math.min(Theme.scaledGeometry(376), Theme.viewportWidth - 24)
+        height: Math.max(Theme.scaledGeometry(40), Math.min(naturalHeight,
+            openAbove ? spaceAbove : spaceBelow))
         padding: 0
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
         onOpened: {
@@ -114,8 +162,9 @@ Button {
             Rectangle {
                 Layout.fillHeight: true
                 Layout.preferredWidth: Theme.scaledGeometry(48)
-                color: Theme.palette.chatSidebar
-                radius: Theme.scaledGeometry(14)
+                // T3 keeps the rail on the popup surface and marks the active
+                // provider with an edge bar instead of a filled sidebar tile.
+                color: "transparent"
                 Rectangle {
                     anchors.right: parent.right
                     anchors.top: parent.top
@@ -127,15 +176,16 @@ Button {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.top: parent.top
-                    anchors.topMargin: Theme.scaledGeometry(8)
-                    spacing: Theme.scaledGeometry(4)
+                    spacing: 0
                     Repeater {
                         model: control.providerTabs()
                         delegate: Button {
                             id: providerTabButton
                             required property var modelData
+                            readonly property bool active: control.providerFilter === modelData.key
+                            readonly property bool favorites: modelData.key === "favorites"
                             width: Theme.scaledGeometry(48)
-                            height: Theme.scaledGeometry(42)
+                            height: favorites ? Theme.scaledGeometry(44) : Theme.scaledGeometry(40)
                             padding: 0
                             hoverEnabled: true
                             Accessible.name: modelData.label
@@ -145,11 +195,18 @@ Button {
                                 modelList.positionViewAtBeginning()
                             }
                             contentItem: Item {
+                                Rectangle {
+                                    anchors.fill: parent
+                                    anchors.margins: Theme.scaledGeometry(5)
+                                    radius: Theme.scaledGeometry(8)
+                                    color: providerTabButton.hovered && !providerTabButton.active
+                                        ? control.rowHover : "transparent"
+                                }
                                 VrProviderIcon {
                                     visible: modelData.key === "codex" || modelData.key === "claude" || modelData.key === "opencode" || modelData.key === "antigravity"
                                     anchors.centerIn: parent
-                                    width: Theme.scaledGeometry(19)
-                                    height: Theme.scaledGeometry(19)
+                                    width: Theme.scaledGeometry(20)
+                                    height: Theme.scaledGeometry(20)
                                     provider: modelData.key
                                 }
                                 VrLineIcon {
@@ -158,24 +215,29 @@ Button {
                                     width: Theme.iconMedium
                                     height: Theme.iconMedium
                                     kind: modelData.kind
-                                    foreground: modelData.key === "favorites" && control.providerFilter === "favorites"
-                                        ? Theme.palette.brandOrange : Theme.palette.text
+                                    filled: true
+                                    foreground: providerTabButton.active
+                                        ? Theme.palette.headingText : Theme.palette.mutedText
                                 }
-                            }
-                            background: Rectangle {
-                                color: control.providerFilter === modelData.key
-                                    ? Theme.palette.selection : providerTabButton.hovered
-                                        ? Theme.palette.chatControl : "transparent"
                                 Rectangle {
-                                    visible: control.providerFilter === modelData.key
-                                    anchors.left: parent.left
+                                    visible: providerTabButton.active
+                                    anchors.right: parent.right
                                     anchors.verticalCenter: parent.verticalCenter
                                     width: Theme.scaledGeometry(3)
-                                    height: Theme.scaledGeometry(26)
+                                    height: Theme.scaledGeometry(20)
                                     radius: 2
                                     color: Theme.palette.brandOrange
                                 }
+                                Rectangle {
+                                    visible: providerTabButton.favorites
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.bottom: parent.bottom
+                                    height: 1
+                                    color: Theme.palette.chatBorder
+                                }
                             }
+                            background: Item { }
                         }
                     }
                 }
@@ -188,13 +250,13 @@ Button {
 
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: Theme.scaledGeometry(52)
+                    Layout.preferredHeight: Theme.scaledGeometry(50)
                     color: "transparent"
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: Theme.scaledGeometry(12)
+                        anchors.leftMargin: Theme.scaledGeometry(13)
                         anchors.rightMargin: Theme.scaledGeometry(10)
-                        spacing: Theme.scaledGeometry(7)
+                        spacing: Theme.scaledGeometry(9)
                         VrLineIcon {
                             Layout.preferredWidth: Theme.iconMedium
                             Layout.preferredHeight: Theme.iconMedium
@@ -210,7 +272,7 @@ Button {
                             placeholderTextColor: Theme.palette.mutedText
                             selectionColor: Theme.palette.selection
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(13)
+                            font.pixelSize: Theme.fontSizeControl
                             background: Item { }
                             onTextChanged: modelList.positionViewAtBeginning()
                         }
@@ -219,7 +281,7 @@ Button {
                         anchors.left: parent.left
                         anchors.right: parent.right
                         anchors.bottom: parent.bottom
-                        anchors.leftMargin: Theme.scaledGeometry(12)
+                        anchors.leftMargin: Theme.scaledGeometry(13)
                         anchors.rightMargin: Theme.scaledGeometry(10)
                         height: 1
                         color: searchField.activeFocus ? Theme.palette.brandOrange : Theme.palette.chatBorder
@@ -243,12 +305,13 @@ Button {
                         text: parent.text
                         color: Theme.palette.text
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCompact
+                        renderType: Theme.textRenderType
                         verticalAlignment: Text.AlignVCenter
                     }
                     background: Rectangle {
                         radius: Theme.scaledGeometry(8)
-                        color: parent.hovered ? Theme.palette.chatControl : "transparent"
+                        color: parent.hovered ? control.rowHover : "transparent"
                     }
                 }
 
@@ -259,7 +322,7 @@ Button {
                     Layout.fillHeight: true
                     Layout.margins: 8
                     clip: true
-                    spacing: Theme.scaledGeometry(3)
+                    spacing: Theme.scaledGeometry(2)
                     model: control.visibleItems
                     ScrollIndicator.vertical: ScrollIndicator { }
 
@@ -282,14 +345,16 @@ Button {
                                     text: "Modelos legado"
                                     color: Theme.palette.text
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(13)
+                                    font.pixelSize: Theme.fontSizeCompact
                                     font.weight: Font.DemiBold
+                                    renderType: Theme.textRenderType
                                 }
                                 Text {
                                     text: control.legacyItems.length + (control.legacyItems.length === 1 ? " modelo" : " modelos")
                                     color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSizeCaption
+                                    renderType: Theme.textRenderType
                                 }
                             }
                             VrLineIcon {
@@ -299,8 +364,8 @@ Button {
                             }
                         }
                         background: Rectangle {
-                            radius: Theme.scaledGeometry(10)
-                            color: parent.hovered ? Theme.palette.chatControl : "transparent"
+                            radius: Theme.scaledGeometry(8)
+                            color: parent.hovered ? control.rowHover : "transparent"
                         }
                     }
 
@@ -310,73 +375,75 @@ Button {
                         required property int index
                         required property var modelData
                         readonly property int sourceIndex: modelData.sourceIndex
+                        readonly property bool selected: control.currentIndex === sourceIndex
                         width: modelList.width
-                        height: Theme.scaledGeometry(56)
-                        radius: Theme.scaledGeometry(10)
-                        color: control.currentIndex === sourceIndex
-                            ? Qt.rgba(1.0, 0.45, 0.0, 0.14)
-                            : modelHover.hovered ? Theme.palette.chatControl : "transparent"
-                        Rectangle {
-                            visible: control.currentIndex === modelRow.sourceIndex
-                            anchors.left: parent.left
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: Theme.scaledGeometry(3)
-                            height: Theme.scaledGeometry(34)
-                            radius: 2
-                            color: Theme.palette.brandOrange
-                        }
+                        height: Theme.scaledGeometry(52)
+                        radius: Theme.scaledGeometry(8)
+                        color: selected
+                            ? control.rowHighlight
+                            : modelHover.hovered ? control.rowHover : "transparent"
 
                         RowLayout {
                             anchors.fill: parent
                             anchors.leftMargin: Theme.scaledGeometry(10)
-                            anchors.rightMargin: Theme.scaledGeometry(7)
-                            spacing: Theme.scaledGeometry(9)
-                            VrProviderIcon {
-                                Layout.preferredWidth: Theme.scaledGeometry(22)
-                                Layout.preferredHeight: Theme.scaledGeometry(22)
-                                provider: modelData.provider || "codex"
-                            }
+                            anchors.rightMargin: Theme.scaledGeometry(8)
+                            spacing: Theme.scaledGeometry(8)
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                spacing: 2
+                                spacing: Theme.scaledGeometry(2)
                                 Text {
                                     Layout.fillWidth: true
                                     text: modelData.displayName || modelData.label
                                     color: Theme.palette.text
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(13)
+                                    font.pixelSize: Theme.fontSizeCompact
                                     font.weight: Font.DemiBold
+                                    renderType: Theme.textRenderType
                                     elide: Text.ElideRight
                                 }
-                                Text {
+                                RowLayout {
                                     Layout.fillWidth: true
-                                    text: modelData.providerLabel || modelData.provider || ""
-                                    color: Theme.palette.mutedText
-                                    font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSizeCaption
-                                    elide: Text.ElideRight
+                                    spacing: Theme.scaledGeometry(6)
+                                    VrProviderIcon {
+                                        Layout.preferredWidth: Theme.scaledGeometry(14)
+                                        Layout.preferredHeight: Theme.scaledGeometry(14)
+                                        provider: modelData.provider || "codex"
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: modelData.providerLabel || modelData.provider || ""
+                                        color: Theme.palette.mutedText
+                                        font.family: Theme.fontFamily
+                                        font.pixelSize: Theme.fontSizeCaption
+                                        renderType: Theme.textRenderType
+                                        elide: Text.ElideRight
+                                    }
                                 }
                             }
                             Rectangle {
-                                visible: modelRow.sourceIndex < 4
-                                Layout.preferredWidth: Theme.scaledGeometry(42)
-                                Layout.preferredHeight: Theme.scaledGeometry(22)
-                                radius: Theme.scaledGeometry(6)
-                                color: Theme.palette.chatControl
+                                visible: modelRow.sourceIndex < 9
+                                Layout.preferredWidth: chipLabel.implicitWidth + Theme.scaledGeometry(12)
+                                Layout.preferredHeight: Theme.scaledGeometry(18)
+                                radius: Theme.scaledGeometry(5)
+                                color: Theme.palette.mutedSurface || Theme.palette.chatControl
                                 Text {
+                                    id: chipLabel
                                     anchors.centerIn: parent
                                     text: "Ctrl+" + (modelRow.sourceIndex + 1)
                                     color: Theme.palette.mutedText
                                     font.family: Theme.fontFamily
                                     font.pixelSize: Theme.fontSizeMicro
+                                    renderType: Theme.textRenderType
                                 }
                             }
                             VrIconButton {
-                                implicitWidth: Theme.scaledGeometry(30)
-                                implicitHeight: Theme.scaledGeometry(30)
-                                symbol: modelData.favorite ? "★" : "☆"
+                                implicitWidth: Theme.scaledGeometry(28)
+                                implicitHeight: Theme.scaledGeometry(28)
+                                iconSize: Theme.iconSmall
+                                iconKind: "star"
+                                iconFilled: modelData.favorite === true
                                 foreground: modelData.favorite
-                                    ? Theme.palette.brandOrange : Theme.palette.mutedText
+                                    ? control.favoriteColor : Theme.palette.mutedText
                                 Accessible.name: modelData.favorite
                                     ? "Remover dos favoritos" : "Adicionar aos favoritos"
                                 onClicked: control.favoriteToggled(modelRow.sourceIndex)
@@ -401,7 +468,8 @@ Button {
                                 ? "Nenhum modelo favorito" : "Nenhum modelo encontrado"
                         color: Theme.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCaption
+                        renderType: Theme.textRenderType
                     }
                 }
             }

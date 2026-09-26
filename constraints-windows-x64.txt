@@ -8,7 +8,6 @@ iniconfig==2.3.0
 markdownify==1.2.3
 packaging==26.2
 pefile==2024.8.26
-Pillow==12.3.0
 playwright==1.60.0
 pluggy==1.6.0
 pyee==13.0.1
@@ -19,7 +18,6 @@ PySide6==6.11.1
 PySide6_Addons==6.11.1
 PySide6_Essentials==6.11.1
 pyspellchecker==0.9.0
-pytesseract==0.3.13
 pytest==9.1.1
 python-dotenv==1.2.2
 pywin32-ctypes==0.2.3

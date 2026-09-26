@@ -67,11 +67,22 @@ QtObject {
     readonly property real fontSizeHeading: fontSize(18)
     readonly property real fontSizeSection: fontSize(20)
     readonly property real fontSizeTitle: fontSize(24)
+    readonly property real fontSizeDisplay: fontSize(30)
     readonly property real fontSizePageTitle: fontSize(26)
 
     // T3 landing hierarchy: text-2xl (24) below 640px, text-3xl (30) above it.
     readonly property real fontSizeLandingCompact: fontSize(24)
     readonly property real fontSizeLanding: fontSize(30)
+
+    // T3 chat markdown (.chat-markdown): text-sm (14) with leading-relaxed
+    // (1.625); headings use absolute rem sizes (h1 1.25rem, h2 1.125rem,
+    // h3 1rem, h4-h6 .875rem) with line-height 1.3; inline code and table
+    // cells use .75rem (12).
+    readonly property real markdownBodySize: fontSize(14)
+    readonly property real markdownLineHeight: 1.625
+    readonly property real markdownHeadingLineHeight: 1.3
+    readonly property real markdownCodeSize: fontSize(12)
+    readonly property real markdownTableSize: fontSize(12)
 
     // Semantic aliases for consistency
     readonly property real microSize: fontSizeMicro
@@ -131,27 +142,49 @@ QtObject {
     readonly property int radiusLg: scaledGeometry(16)
 
     // Standardized control heights (aligned with T3 Code)
-    // T3 desktop reference: button ~32, select ~32, input ~30, compact smaller.
-    // Qt defaults use compact (32) for inputs/selects/buttons; 38/44 remain
-    // for large touch targets and explicit large variants.
+    // T3 button cva at desktop widths (sm: applies above 640px):
+    // default h-8 (32), sm h-7 (28), xs h-6 (24), micro h-5 (20),
+    // lg h-9 (36), xl h-10 (40). Icon buttons: icon-xs size-6 (24),
+    // icon-sm size-7 (28), icon size-8 (32), icon-lg size-9 (36).
     readonly property int controlHeightCompact: scaledGeometry(32)
-    readonly property int compactControlHeight: scaledGeometry(34)
-    readonly property int controlHeight: scaledGeometry(38)
-    readonly property int controlHeightNormal: scaledGeometry(38)
-    readonly property int controlHeightLarge: scaledGeometry(44)
+    readonly property int compactControlHeight: scaledGeometry(28)
+    readonly property int controlHeight: scaledGeometry(36)
+    readonly property int controlHeightNormal: scaledGeometry(32)
+    readonly property int controlHeightLarge: scaledGeometry(40)
     readonly property int menuRowHeight: scaledGeometry(32)
     readonly property int pickerRowHeight: scaledGeometry(40)
-    readonly property int iconButtonCompact: scaledGeometry(28)
-    readonly property int iconButtonNormal: scaledGeometry(34)
-    readonly property int iconButtonLarge: scaledGeometry(38)
+    readonly property int iconButtonCompact: scaledGeometry(24)
+    readonly property int iconButtonNormal: scaledGeometry(28)
+    readonly property int iconButtonLarge: scaledGeometry(32)
 
-    readonly property int navigationWidth: scaledGeometry(228)
+    // T3 sidebar tokens: --sidebar-width 256px (min 208), content inset 8,
+    // row content inset 10, control gap 8, search row h-8 (32).
+    readonly property int navigationWidth: scaledGeometry(256)
+    readonly property int navigationWidthMinimum: scaledGeometry(208)
     readonly property int navigationCollapsedWidth: scaledGeometry(64)
-    readonly property int chatSidebarWidth: scaledGeometry(220)
+    readonly property int chatSidebarWidth: scaledGeometry(256)
+    readonly property int sidebarContentInset: scaledGeometry(8)
+    readonly property int sidebarRowInset: scaledGeometry(10)
+    readonly property int sidebarRowHeight: scaledGeometry(32)
+    readonly property int sidebarControlGap: scaledGeometry(8)
     readonly property int chatHeaderHeight: scaledGeometry(52)
-    readonly property int contentWidth: scaledGeometry(800)
+    // T3 chat column: max-w-3xl = 48rem = 768px.
+    readonly property int contentWidth: scaledGeometry(768)
     readonly property int messageRadius: scaledGeometry(16)
-    readonly property int composerRadius: scaledGeometry(16)
+    // T3 `.chat-markdown :not(pre)>code` chip: 0.375rem radius and
+    // `.1rem .35rem` padding. Qt paints fragment backgrounds as flat
+    // rectangles, so VrInlineChipLayer repaints the chip with these
+    // metrics; the horizontal padding is kept small because Qt does not
+    // reserve room for it in the text layout. The vertical padding stays
+    // unrounded: the browser chip box is the code font box plus
+    // 2*(.1rem + 1px border), measured at 19.19px for the 14px box of the
+    // default 12px code font.
+    readonly property int inlineChipRadius: scaledGeometry(6)
+    readonly property int inlineChipPadding: scaledGeometry(3)
+    readonly property real inlineChipPaddingY: 1.6 * selectedScale * interfaceScale
+    // T3 Code composer surface: rounded-3xl = 1.5rem = 24px; the resting
+    // context strip closes with rounded-b-2xl = 16px corners.
+    readonly property int composerRadius: scaledGeometry(24)
     readonly property int messageGap: scaledGeometry(8)
 
     // Lucide-style presence on T3's size scale (12/14/16/18/20)

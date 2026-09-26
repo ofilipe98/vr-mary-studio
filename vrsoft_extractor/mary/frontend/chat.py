@@ -86,14 +86,20 @@ from .bridges.presentation import (
 )
 from .file_links import parse_file_reference, resolve_markdown_file_link
 from .bridges.codeadmin import CodeAdminDomain
+from .bridges.knowledgetransfer import KnowledgeTransferDomain
 from .bridges.providersettings import ProviderSettingsDomain
 from .bridges.activity import ActivityDomain
 from .bridges.conversations import ConversationsDomain
+from .bridges.codepreview import CodePreviewDomain
 
 class ChatBridge(QObject):
     @property
     def _CodeAdmin_domain(self):
         return CodeAdminDomain(self)
+
+    @property
+    def _KnowledgeTransfer_domain(self):
+        return KnowledgeTransferDomain(self)
 
     @property
     def _ProviderSettings_domain(self):
@@ -107,6 +113,10 @@ class ChatBridge(QObject):
     def _Conversations_domain(self):
         return ConversationsDomain(self)
 
+    @property
+    def _CodePreview_domain(self):
+        return CodePreviewDomain(self)
+
     """Expose existing conversation reads without changing domain behavior."""
 
     conversationsChanged = Signal()
@@ -117,9 +127,15 @@ class ChatBridge(QObject):
     messageCopied = Signal(str)
     stateChanged = Signal()
     decompiledDirectoryDetected = Signal("QVariantMap")
+    knowledgePackageDetected = Signal("QVariantMap")
+    knowledgePackageImported = Signal("QVariantMap")
+    knowledgePackageExported = Signal("QVariantMap")
+    knowledgeTransferFailed = Signal(str)
     approvalRequested = Signal("QVariantMap")
     fileSuggestionsChanged = Signal()
     filePreviewRequested = Signal(str, int, int)
+    decompiledSourcePreviewRequested = Signal("QVariantMap")
+    _decompiledSourceResolved = Signal(object)
     conversationArchived = Signal(str)
     draftRestored = Signal(str)
     browserNavigationRequested = Signal(str)
@@ -244,6 +260,13 @@ class ChatBridge(QObject):
         self._code_analysis_enabled = False
         self._code_analysis_release = "current"
         self._code_analysis_release_items: list[dict[str, Any]] = []
+        self._decompiled_preview_generation = 0
+        self._decompiled_preview_threads: set[threading.Thread] = set()
+        self._decompiled_preview_threads_lock = threading.Lock()
+        self._decompiledSourceResolved.connect(
+            self._on_decompiled_source_resolved,
+            Qt.ConnectionType.QueuedConnection,
+        )
         self._release_coverage_root = settings.root
         self._release_coverage_generation = 0
         self._release_coverage_thread: threading.Thread | None = None
@@ -268,6 +291,7 @@ class ChatBridge(QObject):
         self._application_preview_thread = None
         self._package_operation_thread = None
         self._release_snapshot_running = False
+        self._release_snapshot_progress = 0.0
         self._decompiled_export_running = False
         self._decompiled_export_progress = 0.0
         self._decompiled_export_processed = 0
@@ -276,6 +300,12 @@ class ChatBridge(QObject):
         self._decompiled_import_progress = 0.0
         self._decompiled_import_processed = 0
         self._decompiled_import_total = 0
+        self._knowledge_transfer_running = False
+        self._knowledge_transfer_operation = ""
+        self._knowledge_transfer_progress = 0.0
+        self._knowledge_transfer_processed = 0
+        self._knowledge_transfer_total = 0
+        self._knowledge_transfer_sources: list[dict[str, Any]] = []
         self._release_snapshot_status = ""
         self._release_snapshot_results: queue.SimpleQueue[dict[str, Any]] = (
             queue.SimpleQueue()
@@ -290,6 +320,9 @@ class ChatBridge(QObject):
         self._code_processing_total_jars = 0
         self._code_processing_can_retry = False
         self._ultra_application_contexts: list[dict[str, Any]] = []
+        self._pending_ultra_package_choice_id = ""
+        self._pending_ultra_package_choice_error = ""
+        self._code_analysis_auto_enable_pending = False
         self._applications_catalog: list[dict[str, Any]] = []
         self._selected_app_id: str = ""
         self._app_versions: list[dict[str, Any]] = []
@@ -303,10 +336,18 @@ class ChatBridge(QObject):
         self._apps_catalog_thread: threading.Thread | None = None
         self._apps_catalog_dirty = False
         self._applications_catalog_loaded = False
+        self._apps_catalog_phase = ""
+        self._apps_catalog_phase_apps = 0
+        self._apps_catalog_phase_versions = 0
+        self._apps_catalog_progress_current = 0
+        self._apps_catalog_progress_total = 0
         self._app_variants: list[dict[str, Any]] = []
         self._selected_app_origin_id = ""
         self._code_processing_relative_jars: tuple[str, ...] = ()
         self._applicationsLoaded.connect(self._on_applications_loaded, Qt.ConnectionType.QueuedConnection)
+        self.applicationsCatalogPhase.connect(
+            self._on_applications_catalog_phase, Qt.ConnectionType.QueuedConnection
+        )
         self._app_comparison_thread: threading.Thread | None = None
         self._app_sources = {}
         self._app_sources_thread = None
@@ -351,7 +392,7 @@ class ChatBridge(QObject):
         ] = queue.SimpleQueue()
         self._code_processing_status_threads: set[threading.Thread] = set()
         self._code_processing_status_threads_lock = threading.Lock()
-        self._senior_profile_enabled = False
+        self._expert_profile_enabled = False
         self._vr_response_mode = "auto"
         self._load_research_config()
         self._apply_research_config()
@@ -608,6 +649,47 @@ class ChatBridge(QObject):
     def applicationsCatalogLoaded(self) -> bool:  # noqa: N802
         return self._applications_catalog_loaded
 
+    @Property(str, notify=stateChanged)
+    def applicationsCatalogStatusText(self) -> str:  # noqa: N802
+        if not self.applicationsCatalogLoading:
+            return ""
+        phase = self._apps_catalog_phase
+        if phase == "indexing_coverage":
+            total = self._apps_catalog_progress_total
+            if total > 0:
+                percent = min(
+                    100.0,
+                    100.0 * self._apps_catalog_progress_current / total,
+                )
+                return (
+                    "Atualizando catálogo — verificando índice "
+                    f"({self._apps_catalog_progress_current}/{total} pacotes · "
+                    f"{percent:.0f}%)…"
+                )
+        elif phase == "loading_versions":
+            apps_count = self._apps_catalog_phase_apps
+            versions_count = self._apps_catalog_phase_versions
+            if apps_count > 0:
+                return (
+                    f"Atualizando catálogo — {apps_count} aplicativo(s) · "
+                    f"{versions_count} versão(ões) detectados, carregando metadados…"
+                )
+            return "Atualizando catálogo — carregando versões e metadados…"
+        return "Atualizando catálogo — detectando aplicativos…"
+
+    @Property(float, notify=stateChanged)
+    def applicationsCatalogProgress(self) -> float:  # noqa: N802
+        total = self._apps_catalog_progress_total
+        if not self.applicationsCatalogLoading or total <= 0:
+            return 0.0
+        return min(100.0, 100.0 * self._apps_catalog_progress_current / total)
+
+    @Property(int, notify=stateChanged)
+    def applicationsCatalogProgressTotal(self) -> int:  # noqa: N802
+        if not self.applicationsCatalogLoading:
+            return 0
+        return self._apps_catalog_progress_total
+
     @Property("QVariantList", notify=stateChanged)
     def appVariants(self) -> list[dict[str, Any]]:  # noqa: N802
         return [dict(item) for item in self._app_variants]
@@ -628,6 +710,19 @@ class ChatBridge(QObject):
     @Slot(object)
     def _on_applications_loaded(self, result: object) -> None:
         self._CodeAdmin_domain._on_applications_loaded(result)
+
+    @Slot(str, int, int)
+    def _on_applications_catalog_phase(self, phase: str, first: int, second: int) -> None:
+        if self._closed:
+            return
+        self._apps_catalog_phase = str(phase or "")
+        if self._apps_catalog_phase == "loading_versions":
+            self._apps_catalog_phase_apps = int(first)
+            self._apps_catalog_phase_versions = int(second)
+        elif self._apps_catalog_phase == "indexing_coverage":
+            self._apps_catalog_progress_current = int(first)
+            self._apps_catalog_progress_total = int(second)
+        self.stateChanged.emit()
 
     @Slot(object)
     def _on_app_comparison_loaded(self, result: object) -> None:
@@ -719,6 +814,22 @@ class ChatBridge(QObject):
         self._CodeAdmin_domain.removeApplicationContext(app_id)
 
     @Property("QVariantMap", notify=stateChanged)
+    def pendingImportedPackageForUltra(self) -> dict[str, Any]:  # noqa: N802
+        return self._CodeAdmin_domain.pending_imported_package_for_ultra()
+
+    @Slot(str, result=bool)
+    def requestImportedPackageForUltra(self, package_id: str) -> bool:  # noqa: N802
+        return self._CodeAdmin_domain.requestImportedPackageForUltra(package_id)
+
+    @Slot(str, result=bool)
+    def useImportedPackageInUltra(self, package_id: str) -> bool:  # noqa: N802
+        return self._CodeAdmin_domain.useImportedPackageInUltra(package_id)
+
+    @Slot(str)
+    def dismissImportedPackageUltraChoice(self, package_id: str) -> None:  # noqa: N802
+        self._CodeAdmin_domain.dismissImportedPackageUltraChoice(package_id)
+
+    @Property("QVariantMap", notify=stateChanged)
     def selectedVersionDetails(self) -> dict[str, Any]:  # noqa: N802
         return dict(self._selected_version_details)
 
@@ -798,6 +909,11 @@ class ChatBridge(QObject):
     def releaseSnapshotStatus(self) -> str:  # noqa: N802
         return self._release_snapshot_status
 
+    @Property(float, notify=stateChanged)
+    def releaseSnapshotProgress(self) -> float:  # noqa: N802
+        """Percentual real do snapshot/release em andamento (0.0 quando não há total)."""
+        return self._release_snapshot_progress
+
     @Property(bool, notify=stateChanged)
     def decompiledExportRunning(self) -> bool:  # noqa: N802
         return self._decompiled_export_running
@@ -829,6 +945,30 @@ class ChatBridge(QObject):
     @Property(int, notify=stateChanged)
     def decompiledImportTotal(self) -> int:  # noqa: N802
         return self._decompiled_import_total
+
+    @Property(bool, notify=stateChanged)
+    def knowledgeTransferRunning(self) -> bool:  # noqa: N802
+        return self._knowledge_transfer_running
+
+    @Property(str, notify=stateChanged)
+    def knowledgeTransferOperation(self) -> str:  # noqa: N802
+        return self._knowledge_transfer_operation
+
+    @Property(float, notify=stateChanged)
+    def knowledgeTransferProgress(self) -> float:  # noqa: N802
+        return self._knowledge_transfer_progress
+
+    @Property(int, notify=stateChanged)
+    def knowledgeTransferProcessed(self) -> int:  # noqa: N802
+        return self._knowledge_transfer_processed
+
+    @Property(int, notify=stateChanged)
+    def knowledgeTransferTotal(self) -> int:  # noqa: N802
+        return self._knowledge_transfer_total
+
+    @Property("QVariantList", notify=stateChanged)
+    def knowledgeTransferSources(self) -> list[dict[str, Any]]:  # noqa: N802
+        return [dict(item) for item in self._knowledge_transfer_sources]
 
     @Property(bool, notify=stateChanged)
     def decompiledCodeExportAvailable(self) -> bool:  # noqa: N802
@@ -1070,8 +1210,8 @@ class ChatBridge(QObject):
         return f"ETA local: {duration} · confiança {confidence} · {samples} execução(ões)"
 
     @Property(bool, notify=stateChanged)
-    def seniorProfileEnabled(self) -> bool:  # noqa: N802
-        return self._senior_profile_enabled
+    def expertProfileEnabled(self) -> bool:  # noqa: N802
+        return self._expert_profile_enabled
 
     @Property(str, notify=stateChanged)
     def vrResponseMode(self) -> str:  # noqa: N802
@@ -1225,66 +1365,6 @@ class ChatBridge(QObject):
     @Property(bool, notify=stateChanged)
     def extensionsLoading(self) -> bool:  # noqa: N802
         return self._extensions_loading
-
-    @Property(float, notify=stateChanged)
-    def contextUsageFraction(self) -> float:  # noqa: N802
-        row = self._selected_database_row()
-        window = self._provider_context_window()
-        if row is None or not window:
-            return 0.0
-        used = int(row["context_used_tokens"] or 0)
-        return min(1.0, used / window)
-
-    @Property(bool, notify=stateChanged)
-    def hasContextWindow(self) -> bool:  # noqa: N802
-        row = self._selected_database_row()
-        return bool(
-            row is not None
-            and int(row["context_used_tokens"] or 0) > 0
-            and self._provider_context_window() > 0
-        )
-
-    @Property(str, notify=stateChanged)
-    def contextUsageLabel(self) -> str:  # noqa: N802
-        row = self._selected_database_row()
-        window = self._provider_context_window()
-        if row is None or not window:
-            return "Aguardando dados"
-        used = int(row["context_used_tokens"] or 0)
-        return f"{used:,} / {window:,} tokens".replace(",", ".")
-
-    @Property(str, notify=stateChanged)
-    def contextUsageCompactLabel(self) -> str:  # noqa: N802
-        row = self._selected_database_row()
-        window = self._provider_context_window()
-        if row is None or not window:
-            return "Aguardando dados"
-        used = int(row["context_used_tokens"] or 0)
-        percentage = min(100, round(used * 100 / window))
-        return f"{percentage}% · {self._compact_tokens(used)}/{self._compact_tokens(window)}"
-
-    @Property(str, notify=stateChanged)
-    def contextUsageNote(self) -> str:  # noqa: N802
-        item = self._current_model_item()
-        model_name = str(item.get("displayName") or self._model or "modelo")
-        return f"Limite informado pelo provedor para {model_name}. Compactação ocorre quando necessário."
-
-    def _provider_context_window(self) -> int:
-        return self._ProviderSettings_domain._provider_context_window()
-
-    @Property(str, notify=stateChanged)
-    def totalProcessedLabel(self) -> str:  # noqa: N802
-        row = self._selected_database_row()
-        total = int(row["total_processed_tokens"] or 0) if row is not None else 0
-        return f"{total:,} tokens".replace(",", ".")
-
-    @staticmethod
-    def _compact_tokens(value: int) -> str:
-        if value >= 1_000_000:
-            return f"{value / 1_000_000:.1f}m".replace(".0m", "m")
-        if value >= 1_000:
-            return f"{value / 1_000:.0f}k"
-        return str(value)
 
     @Property("QVariantList", notify=stateChanged)
     def activitySteps(self) -> list[dict[str, str]]:  # noqa: N802
@@ -1532,6 +1612,7 @@ class ChatBridge(QObject):
             self._application_preview_thread.join(timeout=1.0)
         if self._package_operation_thread is not None:
             self._package_operation_thread.join(timeout=2.0)
+        self._CodePreview_domain.close()
         self._orchestrator.close()
         self._active_turns.clear()
         if hasattr(self, "_timeline_reducers"):
@@ -1891,6 +1972,14 @@ class ChatBridge(QObject):
             return f"Não foi possível ler o arquivo: {exc}"
 
     @Slot(str)
+    def openDecompiledReference(self, value: str) -> None:  # noqa: N802
+        self._CodePreview_domain.open_decompiled_reference(value)
+
+    @Slot(object)
+    def _on_decompiled_source_resolved(self, payload: object) -> None:
+        self._CodePreview_domain.handle_resolved(payload)
+
+    @Slot(str)
     def openFileReference(self, value: str) -> None:  # noqa: N802
         """Resolve a chat file reference and request its in-app preview."""
         parsed = parse_file_reference(str(value or ""))
@@ -2208,7 +2297,7 @@ class ChatBridge(QObject):
         self._code_analysis_enabled = False
         self._code_analysis_release = "current"
         self._code_analysis_release_items = []
-        self._senior_profile_enabled = False
+        self._expert_profile_enabled = False
         self._vr_response_mode = "auto"
         self._load_research_config()
         self._apply_research_config()
@@ -2511,6 +2600,12 @@ class ChatBridge(QObject):
     def refreshCodeAnalysisReleases(self) -> None:  # noqa: N802
         return self._CodeAdmin_domain.refreshCodeAnalysisReleases()
 
+    @Slot()
+    def refreshCodeAnalysisReleasesMetadata(self) -> None:  # noqa: N802
+        return self._CodeAdmin_domain.refreshCodeAnalysisReleases(
+            refresh_applications_catalog=False
+        )
+
     @Slot(str)
     def selectApplication(self, app_id: str) -> None:  # noqa: N802
         return self._CodeAdmin_domain.selectApplication(app_id)
@@ -2553,16 +2648,6 @@ class ChatBridge(QObject):
 
     @Slot(result="QVariantMap")
     @Slot(str, result="QVariantMap")
-    def detectDecompiledDirectory(self, directory: str = "") -> dict[str, Any]:  # noqa: N802
-        return self._CodeAdmin_domain.detectDecompiledDirectory(directory)
-
-    @Slot(str, str, str, result="QVariantMap")
-    @Slot(str, result="QVariantMap")
-    def importDecompiledDirectory(self, source_dir: str, release_id: str = "", package_name: str = "") -> dict[str, Any]:  # noqa: N802
-        return self._CodeAdmin_domain.importDecompiledDirectory(source_dir, release_id, package_name)
-
-    @Slot(result="QVariantMap")
-    @Slot(str, result="QVariantMap")
     def exportDecompiledCode(self, destination_parent: str = "") -> dict[str, Any]:  # noqa: N802
         return self._CodeAdmin_domain.exportDecompiledCode(destination_parent)
 
@@ -2578,6 +2663,28 @@ class ChatBridge(QObject):
     @Slot(str, str, result="QVariantMap")
     def exportDecompiledPackage(self, package_id: str, destination_file: str = "") -> dict[str, Any]:  # noqa: N802
         return self._CodeAdmin_domain.exportDecompiledPackage(package_id, destination_file)
+
+    @Slot()
+    def refreshKnowledgeTransferSummary(self) -> None:  # noqa: N802
+        return self._KnowledgeTransfer_domain.refreshKnowledgeTransferSummary()
+
+    @Slot(bool, bool, bool, str, result="QVariantMap")
+    @Slot(bool, bool, bool, str, str, result="QVariantMap")
+    def exportKnowledgePackage(self, include_vrwiki: bool, include_endoo: bool, include_kb: bool, module: str = "", destination_file: str = "") -> dict[str, Any]:  # noqa: N802
+        return self._KnowledgeTransfer_domain.exportKnowledgePackage(
+            include_vrwiki, include_endoo, include_kb, module, destination_file
+        )
+
+    @Slot(result="QVariantMap")
+    @Slot(str, result="QVariantMap")
+    def detectKnowledgePackageArchive(self, archive_path: str = "") -> dict[str, Any]:  # noqa: N802
+        return self._KnowledgeTransfer_domain.detectKnowledgePackageArchive(archive_path)
+
+    @Slot(str, str, result="QVariantMap")
+    def importKnowledgePackageArchive(self, archive_path: str, mode: str = "merge") -> dict[str, Any]:  # noqa: N802
+        return self._KnowledgeTransfer_domain.importKnowledgePackageArchive(
+            archive_path, mode
+        )
 
     @Slot(str, result=bool)
     @Slot(str, bool, result=bool)
@@ -2616,14 +2723,14 @@ class ChatBridge(QObject):
         )
 
     @Slot(bool)
-    def setSeniorProfileEnabled(self, enabled: bool) -> None:  # noqa: N802
-        self._senior_profile_enabled = bool(enabled)
-        if not self._senior_profile_enabled:
+    def setExpertProfileEnabled(self, enabled: bool) -> None:  # noqa: N802
+        self._expert_profile_enabled = bool(enabled)
+        if not self._expert_profile_enabled:
             self._vr_response_mode = "auto"
             self._preferences.setValue("research/response_mode", "auto")
         self._preferences.setValue(
-            "research/senior_profile_enabled",
-            self._senior_profile_enabled,
+            "research/expert_profile_enabled",
+            self._expert_profile_enabled,
         )
         self._preferences.sync()
         self.stateChanged.emit()
@@ -2631,7 +2738,7 @@ class ChatBridge(QObject):
     @Slot(str)
     def setVrResponseMode(self, mode: str) -> None:  # noqa: N802
         selected = self._normalize_response_mode(mode)
-        if not self._senior_profile_enabled:
+        if not self._expert_profile_enabled:
             selected = "auto"
         if selected == self._vr_response_mode:
             return
@@ -2808,17 +2915,30 @@ class ChatBridge(QObject):
 
     @Property("QVariantMap", notify=stateChanged)
     def resumableResearch(self) -> dict:  # noqa: N802
-        return {}
+        conversation_id = self._selected_conversation_id()
+        if not conversation_id:
+            return {}
+        run = self._orchestrator.research_repository.latest_resumable(
+            conversation_id
+        )
+        if not run:
+            return {}
+        return {
+            "run_id": str(run["run_id"]),
+            "status": str(run["status"]),
+            "request_text": str(run["request_text"]),
+            "label": "Retomar investigação",
+        }
 
     @Property(QObject, constant=True)
     def retrievalSettings(self):  # noqa: N802
         return self._retrieval_settings
 
-    @Slot(bool)
-    def resumeResearch(self, grant_budget: bool = False) -> None:  # noqa: N802
-        return None
+    @Slot()
+    def resumeResearch(self) -> None:  # noqa: N802
+        self._ProviderSettings_domain.resumeResearch()
 
-    def _send_message(self, text: str, *, resume_run_id: str = "", grant_budget: bool = False) -> bool:
+    def _send_message(self, text: str, *, resume_run_id: str = "") -> bool:
         content = str(text or "").strip()
         if content.lower() == "/usage-limits" or content.lower().startswith("/usage-limits "):
             self.openUsageLimits()
@@ -2981,6 +3101,13 @@ class ChatBridge(QObject):
         self.stateChanged.emit()
         self.selectionChanged.emit()
         try:
+            use_vr = self._vr_mode != "off"
+            if not use_vr or not self._expert_profile_enabled:
+                effective_response_mode = "auto"
+            elif self._vr_response_mode == "auto":
+                effective_response_mode = "adaptive"
+            else:
+                effective_response_mode = self._vr_response_mode
             selected_code_release = self._selected_code_analysis_release_item()
             self._orchestrator.send(
                 conversation_id,
@@ -2989,7 +3116,7 @@ class ChatBridge(QObject):
                 skills,
                 content,
                 content,
-                self._vr_mode != "off",
+                use_vr,
                 image_paths=[] if resume_run_id else image_paths,
                 vr_mode=self._vr_mode,
                 code_analysis_enabled=(
@@ -3007,13 +3134,15 @@ class ChatBridge(QObject):
                     if self._code_analysis_enabled
                     else ""
                 ),
-                response_mode=(
-                    self._vr_response_mode
-                    if self._senior_profile_enabled
-                    else "auto"
-                ),
-                **({"resume_run_id": resume_run_id, "grant_budget": grant_budget} if resume_run_id else {}),
+                response_mode=effective_response_mode,
+                **({"resume_run_id": resume_run_id} if resume_run_id else {}),
             )
+            if resume_run_id:
+                row = self._database.get_conversation(conversation_id)
+                if row is not None:
+                    self._vr_mode = (
+                        self._normalize_vr_mode(row["vr_mode"]) or self._vr_mode
+                    )
             self._draft_records.pop(conversation_id, None)
             self._persist_draft_records()
             self._attachments = []

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from vrsoft_extractor.mary.db import MaryDatabase
 from vrsoft_extractor.mary.knowledge_router import KnowledgeRouter
 from vrsoft_extractor.mary.models import KnowledgeDocument, RuntimeEvent
 from vrsoft_extractor.mary.orchestrator import ChatOrchestrator
+from vrsoft_extractor.mary.retrieval.service import RetrievalService
 
 
 def _settings(tmp_path: Path) -> MarySettings:
@@ -79,6 +81,8 @@ def test_vr_search_tool_spec_matches_schema() -> None:
     spec = vr_search_tool_spec()
     assert spec["name"] == VR_SEARCH_TOOL_NAME
     assert spec["type"] == "function"
+    assert "não prova ausência de evidência nas demais fontes" in spec["description"]
+    assert "source=\"\"" in spec["description"]
     assert set(VR_SEARCH_INPUT_SCHEMA["required"]) == {"query"}
     validate_tool_arguments({"query": "como gerar sped"}, VR_SEARCH_INPUT_SCHEMA)
 
@@ -89,6 +93,7 @@ def test_vr_search_tool_spec_matches_schema() -> None:
         {},
         {"source": "google", "query": "x"},
         {"module": "RH", "query": "x"},
+        {"module": "Fiscal", "query": "x"},
         {"limit": "muito", "query": "x"},
         {"query": "ok", "extra": True},
     ],
@@ -100,6 +105,358 @@ def test_run_vr_search_rejects_invalid_arguments(arguments: dict[str, Any]) -> N
 
     with pytest.raises(Exception):
         run_vr_search(arguments, _Router())
+
+
+def test_vr_search_schema_no_longer_exposes_module() -> None:
+    assert "module" not in VR_SEARCH_INPUT_SCHEMA["properties"]
+    assert "Fiscal" not in json.dumps(VR_SEARCH_INPUT_SCHEMA)
+    with pytest.raises(Exception):
+        validate_tool_arguments(
+            {"query": "x", "module": "Fiscal"}, VR_SEARCH_INPUT_SCHEMA
+        )
+
+
+def _service(tmp_path: Path) -> RetrievalService:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    _seed(database)
+    return RetrievalService(KnowledgeRouter(database, settings.root))
+
+
+def test_search_without_source_consolidates_documentary_lanes(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+
+    payload = service.search("Como gerar SPED Fiscal no VR?", limit=10)
+
+    assert set(payload["source_states"]) == {"wiki", "kb", "schema", "code"}
+    assert payload["source_states"]["wiki"] == "available"
+    assert payload["source_states"]["kb"] == "available"
+    assert payload["source_states"]["schema"] == "available"
+    assert payload["total"] >= 3
+    assert payload["errors"] == {}
+
+
+def test_search_without_source_runs_four_lanes_concurrently(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = _service(tmp_path)
+    barrier = threading.Barrier(4)
+    original = service._search_tool_lane
+
+    def lane(query, lane_name, **kwargs):
+        barrier.wait(timeout=10)
+        return original(query, lane_name, **kwargs)
+
+    monkeypatch.setattr(service, "_search_tool_lane", lane)
+
+    payload = service.search("Como gerar SPED Fiscal no VR?", limit=10)
+
+    assert set(payload["source_states"]) == {"wiki", "kb", "schema", "code"}
+    assert payload["errors"] == {}
+
+
+def test_search_without_source_keeps_fixed_lane_order(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = _service(tmp_path)
+    delays = {"wiki": 0.08, "kb": 0.06, "schema": 0.04, "code": 0.02}
+
+    def lane(query, lane_name, **kwargs):
+        # Deliberately complete in the inverse order.
+        time.sleep(delays[lane_name])
+        return (
+            [{"reference": f"{lane_name}:1", "source": lane_name}],
+            "available",
+            "",
+        )
+
+    monkeypatch.setattr(service, "_search_tool_lane", lane)
+
+    payload = service.search("x", limit=10)
+
+    assert [row["reference"] for row in payload["results"]] == [
+        "wiki:1",
+        "kb:1",
+        "schema:1",
+        "code:1",
+    ]
+
+
+def test_search_without_source_isolates_lane_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = _service(tmp_path)
+
+    def lane(query, lane_name, **kwargs):
+        if lane_name == "kb":
+            raise RuntimeError("kb fora do ar")
+        return (
+            [{"reference": f"{lane_name}:1", "source": lane_name}],
+            "available",
+            "",
+        )
+
+    monkeypatch.setattr(service, "_search_tool_lane", lane)
+
+    payload = service.search("x", limit=10)
+
+    assert payload["errors"] == {"kb": "kb fora do ar"}
+    assert payload["source_states"]["kb"] == "unavailable"
+    assert payload["source_states"]["wiki"] == "available"
+    assert [row["reference"] for row in payload["results"]] == [
+        "wiki:1",
+        "schema:1",
+        "code:1",
+    ]
+
+
+def test_search_with_source_runs_only_that_lane(tmp_path: Path, monkeypatch) -> None:
+    service = _service(tmp_path)
+    called: list[str] = []
+
+    def lane(query, lane_name, **kwargs):
+        called.append(lane_name)
+        return (
+            [{"reference": f"{lane_name}:1", "source": lane_name}],
+            "available",
+            "",
+        )
+
+    monkeypatch.setattr(service, "_search_tool_lane", lane)
+
+    payload = service.search("x", source="schema")
+
+    assert called == ["schema"]
+    assert set(payload["source_states"]) == {"schema"}
+    assert [row["reference"] for row in payload["results"]] == ["schema:1"]
+
+
+class _GuidanceService:
+    def __init__(self, results: list[dict[str, Any]]) -> None:
+        self.results = results
+
+    def search(self, query: str, **options: Any) -> dict[str, Any]:
+        return {
+            "query": query,
+            "source": options.get("source", ""),
+            "results": self.results,
+            "total": len(self.results),
+            "source_states": {options.get("source", ""): "available"},
+        }
+
+
+def test_explicit_source_without_results_adds_alternative_guidance() -> None:
+    result = run_vr_search(
+        {"query": "erro na rotina", "source": "code"},
+        _GuidanceService([]),
+    )
+
+    assert result.parsed["source"] == "code"
+    assert result.parsed["guidance"]
+    assert "source=\"\"" in result.parsed["guidance"]
+    assert "sintomas" in result.parsed["guidance"]
+    assert "error" not in result.parsed
+
+
+def test_explicit_source_with_results_does_not_add_guidance() -> None:
+    result = run_vr_search(
+        {"query": "classe", "source": "code"},
+        _GuidanceService([{"reference": "code:1", "source": "code", "excerpt": "x"}]),
+    )
+
+    assert "guidance" not in result.parsed
+
+
+def test_search_without_source_does_not_add_guidance() -> None:
+    result = run_vr_search({"query": "sem resultados"}, _GuidanceService([]))
+
+    assert "guidance" not in result.parsed
+
+
+def test_search_with_source_document_error_is_reported_per_lane(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = _service(tmp_path)
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("indice indisponivel")
+
+    monkeypatch.setattr(service, "_prepare_search", broken)
+
+    payload = service.search("sped fiscal")
+
+    assert payload["source_states"]["wiki"] == "unavailable"
+    assert payload["source_states"]["kb"] == "unavailable"
+    assert payload["source_states"]["schema"] == "unavailable"
+    assert payload["errors"]["wiki"] == "indice indisponivel"
+    assert "code" in payload["source_states"]
+
+
+def _wiki_service(
+    tmp_path: Path, *, disabled: tuple[str, ...] = ("endoo",)
+) -> RetrievalService:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    _seed(database)
+    for origin, source_id, title, text in (
+        (
+            "vrwiki",
+            "sped-vrwiki",
+            "SPED Fiscal VRWiki",
+            "Como gerar o SPED Fiscal no VRWiki com período e loja.",
+        ),
+        (
+            "endoo",
+            "sped-endoo",
+            "SPED Fiscal Endoo",
+            "Como gerar o SPED Fiscal no Endoo com período e loja.",
+        ),
+    ):
+        database.upsert_document(
+            KnowledgeDocument(
+                source="wiki",
+                source_id=source_id,
+                source_origin=origin,
+                title=title,
+                url=f"https://{origin}.example/sped",
+                markdown=text,
+                module="Fiscal",
+                review_status="approved",
+                content_hash=source_id,
+            )
+        )
+    router = KnowledgeRouter(
+        database, settings.root, disabled_origins=disabled
+    )
+    return RetrievalService(router)
+
+
+def test_search_wiki_source_keeps_both_origins_when_endoo_disabled(
+    tmp_path: Path,
+) -> None:
+    service = _wiki_service(tmp_path)
+
+    assert service.enabled_origins("wiki") == ("vrwiki",)
+
+    wiki_only = service.search("Como gerar SPED Fiscal no VR", source="wiki", limit=10)
+    assert wiki_only["source_states"]["wiki"] == "available"
+    assert wiki_only["errors"] == {}
+    assert {hit["source_origin"] for hit in wiki_only["results"]} >= {
+        "vrwiki",
+        "endoo",
+    }
+
+    consolidated = service.search("Como gerar SPED Fiscal no VR", limit=10)
+    assert consolidated["source_states"]["wiki"] == "available"
+    assert {hit["source_origin"] for hit in consolidated["results"]} >= {
+        "vrwiki",
+        "endoo",
+    }
+
+
+def test_search_wiki_source_isolates_origin_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = _wiki_service(tmp_path)
+    original = service._router.database.search_page
+
+    def flaky(query, *, source="", module="", source_origin="", limit=6):
+        if source == "wiki" and source_origin == "endoo":
+            raise RuntimeError("endoo fora do ar")
+        return original(
+            query,
+            source=source,
+            module=module,
+            source_origin=source_origin,
+            limit=limit,
+        )
+
+    monkeypatch.setattr(service._router.database, "search_page", flaky)
+
+    payload = service.search("Como gerar SPED Fiscal no VR", source="wiki", limit=10)
+
+    assert payload["source_states"]["wiki"] == "available"
+    assert payload["errors"]["wiki"] == "endoo: endoo fora do ar"
+    assert payload["results"]
+    assert all(
+        hit["source_origin"] == "vrwiki" for hit in payload["results"]
+    )
+
+
+def test_search_wiki_source_reports_unavailable_when_all_origins_fail(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service = _wiki_service(tmp_path)
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("wiki fora do ar")
+
+    monkeypatch.setattr(service._router.database, "search_page", broken)
+
+    payload = service.search("Como gerar SPED Fiscal no VR", source="wiki")
+
+    assert payload["source_states"]["wiki"] == "unavailable"
+    assert payload["results"] == []
+    assert "wiki fora do ar" in payload["errors"]["wiki"]
+
+
+def test_sources_wiki_lists_both_origins_when_endoo_disabled(
+    tmp_path: Path,
+) -> None:
+    service = _wiki_service(tmp_path)
+
+    payload = service.sources(source="wiki", limit=10)
+
+    assert payload["state"] == "available"
+    assert {hit["source_origin"] for hit in payload["results"]} >= {
+        "vrwiki",
+        "endoo",
+    }
+
+
+def test_read_endoo_reference_when_endoo_disabled(tmp_path: Path) -> None:
+    service = _wiki_service(tmp_path)
+
+    payload = service.read("wiki:sped-endoo")
+
+    assert payload["state"] == "available"
+    assert payload["source_origin"] == "endoo"
+    assert "Endoo" in payload["content"]
+
+
+def test_read_wiki_rejects_origin_outside_source_wide_allowlist(
+    tmp_path: Path,
+) -> None:
+    service = _wiki_service(tmp_path)
+    service._router.database.upsert_document(
+        KnowledgeDocument(
+            source="wiki",
+            source_id="sped-outra-origem",
+            source_origin="outra-origem",
+            title="SPED Fiscal Outra Origem",
+            url="https://outra.example/sped",
+            markdown="SPED Fiscal em outra origem.",
+            module="Fiscal",
+            review_status="approved",
+            content_hash="sped-outra-origem",
+        )
+    )
+
+    payload = service.read("wiki:sped-outra-origem")
+
+    assert payload == {
+        "state": "no_results",
+        "reference": "wiki:sped-outra-origem",
+        "error": "Documento indisponível ou fora do escopo permitido.",
+    }
+    listed = service.sources(source="wiki", limit=20)
+    searched = service.search("SPED Fiscal", source="wiki", limit=20)
+    assert "sped-outra-origem" not in {
+        item["source_id"] for item in listed["results"]
+    }
+    assert "sped-outra-origem" not in {
+        item["source_id"] for item in searched["results"]
+    }
 
 
 def test_knowledge_router_search_returns_compact_results(tmp_path: Path) -> None:
@@ -155,6 +512,20 @@ def test_conversation_options_register_vr_search_when_vr_enabled(
 
     names = [tool["name"] for tool in options.dynamic_tools]
     assert VR_SEARCH_TOOL_NAME in names
+
+
+def test_conversation_options_skip_vr_search_in_off_mode(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_enabled=False
+    )
+
+    options = orchestrator._conversation_options(conversation_id, use_vr=False)
+
+    names = [tool["name"] for tool in options.dynamic_tools]
+    assert VR_SEARCH_TOOL_NAME not in names
 
 
 class _RecordingCodex:

@@ -1,5 +1,4 @@
 import json
-import io
 import os
 import queue
 import shutil
@@ -34,6 +33,8 @@ from vrsoft_extractor.mary.content import (
     write_document,
 )
 from vrsoft_extractor.mary.db import MaryDatabase, _fts_query
+from vrsoft_extractor.mary.knowledge import split_knowledge_document
+from vrsoft_extractor.mary.knowledge_router import KnowledgeRouter
 from vrsoft_extractor.mary.migration import build_manifest, migrate
 from vrsoft_extractor.mary.models import (
     APPROVAL_PRESETS,
@@ -54,11 +55,7 @@ from vrsoft_extractor.mary.providers import (
     normalize_effort,
 )
 from vrsoft_extractor.mary.orchestrator import ChatOrchestrator
-from vrsoft_extractor.mary.ocr import (
-    _download_file,
-    latest_github_installer_url,
-    latest_windows_installer_url,
-)
+from vrsoft_extractor.mary.retrieval import RetrievalService
 from vrsoft_extractor.mary.spellcheck import LocalSpellChecker
 from vrsoft_extractor.mary.search import search_terms
 from vrsoft_extractor.mary.workspace import initialize_workspace
@@ -311,10 +308,19 @@ class MaryCoreTest(unittest.TestCase):
 
         orchestrator.send(conversation_id, "Teste", lambda _event: None)
 
-        self.assertTrue((workspace / "tools" / "vr-search.ps1").is_file())
-        self.assertIn("botão VR está", (workspace / "AGENTS.md").read_text("utf-8"))
-        self.assertNotIn("../../AGENTS.md", (workspace / "AGENTS.md").read_text("utf-8"))
-        self.assertNotIn("@../../AGENTS.md", (workspace / "CLAUDE.md").read_text("utf-8"))
+        agents_text = (workspace / "AGENTS.md").read_text("utf-8")
+        claude_text = (workspace / "CLAUDE.md").read_text("utf-8")
+        self.assertFalse((workspace / "tools" / "vr-search.ps1").exists())
+        self.assertIn(
+            "O contrato de cada turno fornecido pelo Studio é autoritativo",
+            agents_text,
+        )
+        self.assertIn(
+            "O contrato de cada turno fornecido pelo Studio é autoritativo",
+            claude_text,
+        )
+        self.assertNotIn("../../AGENTS.md", agents_text)
+        self.assertNotIn("@../../AGENTS.md", claude_text)
         provider.start_conversation.assert_called_once()
 
     def test_conversation_effort_is_persisted_and_legacy_schema_is_migrated(self):
@@ -624,6 +630,171 @@ class MaryCoreTest(unittest.TestCase):
                 "SELECT count(*) FROM document_versions"
             ).fetchone()[0]
         self.assertEqual(versions, 1)
+
+    def test_legacy_ocr_column_is_cleared_when_document_is_upserted(self):
+        database = MaryDatabase(self.settings.database_path)
+        document = KnowledgeDocument(
+            source="wiki",
+            source_id="legacy-ocr-1",
+            title="Documento legado",
+            url="https://example.com/wiki/legacy-ocr-1",
+            markdown="Conteúdo normal do documento.",
+            module="Fiscal",
+            review_status="approved",
+            content_hash="legacy-ocr-hash",
+        )
+        database.upsert_document(document)
+        with database.connect() as connection:
+            connection.execute(
+                "UPDATE documents SET ocr_text=? WHERE source=? AND source_id=?",
+                ("SENTINELA-OCR-LEGADO", "wiki", "legacy-ocr-1"),
+            )
+
+        database.upsert_document(document)
+
+        with database.connect() as connection:
+            stored = connection.execute(
+                "SELECT ocr_text FROM documents WHERE source=? AND source_id=?",
+                ("wiki", "legacy-ocr-1"),
+            ).fetchone()
+        self.assertEqual(stored["ocr_text"], "")
+
+    def test_split_knowledge_document_indexes_only_provided_markdown(self):
+        chunks = split_knowledge_document(
+            "Título",
+            "# Seção\n\nConteúdo documental confiável.",
+            source="wiki",
+        )
+
+        self.assertEqual(len(chunks), 1)
+        self.assertIn("Conteúdo documental confiável.", chunks[0].content)
+        with self.assertRaises(TypeError):
+            split_knowledge_document("Título", "Conteúdo", "texto de imagem")
+
+    def test_legacy_ocr_text_is_not_returned_by_retrieval_read(self):
+        database = MaryDatabase(self.settings.database_path)
+        document = KnowledgeDocument(
+            source="wiki",
+            source_id="legacy-read-1",
+            title="Documento legado",
+            url="https://example.com/wiki/legacy-read-1",
+            markdown="Conteúdo documental íntegro.",
+            module="Fiscal",
+            review_status="approved",
+            content_hash="legacy-read-hash",
+        )
+        database.upsert_document(document)
+        with database.connect() as connection:
+            connection.execute(
+                "UPDATE documents SET ocr_text=? WHERE source=? AND source_id=?",
+                ("SENTINELA-OCR-LEGADO", "wiki", "legacy-read-1"),
+            )
+        service = RetrievalService(KnowledgeRouter(database, self.settings.root))
+
+        payload = service.read("wiki:legacy-read-1")
+
+        self.assertEqual(payload["state"], "available")
+        self.assertIn("Conteúdo documental íntegro.", payload["content"])
+        self.assertNotIn("SENTINELA-OCR-LEGADO", payload["content"])
+
+    def test_legacy_ocr_text_does_not_match_document_search(self):
+        database = MaryDatabase(self.settings.database_path)
+        document = KnowledgeDocument(
+            source="wiki",
+            source_id="legacy-ocr-search-1",
+            title="Documento documental",
+            url="https://example.com/wiki/legacy-ocr-search-1",
+            markdown="Conteúdo documental confiável.",
+            module="Fiscal",
+            review_status="approved",
+            content_hash="legacy-ocr-search-hash",
+        )
+        document_id, _action = database.upsert_document(document)
+        with database.connect() as connection:
+            connection.execute(
+                "UPDATE documents SET ocr_text=? WHERE id=?",
+                ("SENTINELA-OCR-SOMENTE", document_id),
+            )
+
+        results = database.search(
+            "SENTINELA-OCR-SOMENTE", include_unvalidated=True
+        )
+        page, total = database.search_page(
+            "SENTINELA-OCR-SOMENTE", include_unvalidated=True
+        )
+
+        self.assertEqual(results, [])
+        self.assertEqual(page, [])
+        self.assertEqual(total, 0)
+
+    def test_legacy_ocr_text_does_not_match_review_filter(self):
+        database = MaryDatabase(self.settings.database_path)
+        document = KnowledgeDocument(
+            source="wiki",
+            source_id="legacy-ocr-review-1",
+            title="Documento para revisão",
+            url="https://example.com/wiki/legacy-ocr-review-1",
+            markdown="Conteúdo documental para revisão.",
+            module="Revisar",
+            review_status="pending",
+            product="Produto documental",
+            category="Categoria documental",
+            content_hash="legacy-ocr-review-hash",
+        )
+        document_id, _action = database.upsert_document(document)
+        database.queue_review(
+            document_id,
+            "PDV",
+            0.5,
+            ["evidência documental"],
+            "Revisar",
+        )
+        with database.connect() as connection:
+            connection.execute(
+                "UPDATE documents SET ocr_text=? WHERE id=?",
+                ("SENTINELA-OCR-REVIEW", document_id),
+            )
+
+        page = database.query_reviews(
+            ReviewFilters(
+                query="SENTINELA-OCR-REVIEW", status="all", limit=10
+            )
+        )
+
+        self.assertEqual(page.total, 0)
+        self.assertEqual(page.items, [])
+
+    def test_backfill_chunks_ignores_legacy_ocr_text(self):
+        database = MaryDatabase(self.settings.database_path)
+        document = KnowledgeDocument(
+            source="wiki",
+            source_id="legacy-ocr-backfill-1",
+            title="Documento para backfill",
+            url="https://example.com/wiki/legacy-ocr-backfill-1",
+            markdown="## Procedimento\n\nConteúdo documental para backfill.",
+            module="Fiscal",
+            review_status="approved",
+            content_hash="legacy-ocr-backfill-hash",
+        )
+        document_id, _action = database.upsert_document(document)
+        with database.connect() as connection:
+            connection.execute(
+                "UPDATE documents SET ocr_text=? WHERE id=?",
+                ("SENTINELA-OCR-BACKFILL", document_id),
+            )
+            connection.execute(
+                "DELETE FROM knowledge_chunks WHERE document_id=?",
+                (document_id,),
+            )
+
+        created = database.backfill_knowledge_chunks()
+        chunks = database.document_chunks(document_id)
+        content = "\n".join(str(chunk["content"]) for chunk in chunks)
+
+        self.assertEqual(created, 1)
+        self.assertTrue(chunks)
+        self.assertIn("Conteúdo documental para backfill.", content)
+        self.assertNotIn("SENTINELA-OCR-BACKFILL", content)
 
     def test_search_page_reports_and_reaches_results_beyond_legacy_cap(self):
         database = MaryDatabase(self.settings.database_path)
@@ -1068,39 +1239,6 @@ class MaryCoreTest(unittest.TestCase):
 
         self.assertFalse((self.settings.root / "fora").exists())
 
-    def test_incomplete_ocr_download_does_not_replace_existing_file(self):
-        target = self.root / "por.traineddata"
-        target.write_bytes(b"previous version")
-        with (
-            patch(
-                "vrsoft_extractor.mary.ocr.urllib.request.urlopen",
-                return_value=io.BytesIO(b"curto"),
-            ),
-            self.assertRaisesRegex(RuntimeError, "Download incompleto"),
-        ):
-            _download_file("https://example.com/por", target, minimum_bytes=100)
-
-        self.assertEqual(target.read_bytes(), b"previous version")
-
-    def test_oversized_ocr_download_does_not_replace_existing_file(self):
-        target = self.root / "eng.traineddata"
-        target.write_bytes(b"previous version")
-        with (
-            patch(
-                "vrsoft_extractor.mary.ocr.urllib.request.urlopen",
-                return_value=io.BytesIO(b"oversized"),
-            ),
-            self.assertRaisesRegex(RuntimeError, "excede o limite"),
-        ):
-            _download_file(
-                "https://example.com/eng",
-                target,
-                minimum_bytes=1,
-                maximum_bytes=3,
-            )
-
-        self.assertEqual(target.read_bytes(), b"previous version")
-
     def test_classification_audit_refreshes_review_without_changing_module(self):
         database = MaryDatabase(self.settings.database_path)
         document = KnowledgeDocument(
@@ -1373,6 +1511,25 @@ class MaryCoreTest(unittest.TestCase):
         self.assertNotIn("Signature", rendered)
         self.assertIn("id=7", rendered)
 
+    def test_canonical_markdown_has_no_ocr_sections(self):
+        document = KnowledgeDocument(
+            source="kb",
+            source_id="7",
+            title="Artigo",
+            url="https://example.com/artigo",
+            markdown="Conteúdo da fonte.",
+            module="PDV",
+            content_hash="abc",
+        )
+
+        rendered = canonical_markdown(document)
+
+        self.assertIn("Conteúdo da fonte.", rendered)
+        self.assertIn("## Procedência", rendered)
+        self.assertNotIn("OCR", rendered)
+        self.assertNotIn("Texto reconhecido", rendered)
+        self.assertNotIn("Texto extraído das imagens", rendered)
+
     def test_migration_is_allowlist_and_rejects_mojibake(self):
         (self.old / "AGENTS.md").write_text("# Mary", encoding="utf-8")
         (self.old / "VRWiki").mkdir()
@@ -1447,33 +1604,6 @@ class MaryCoreTest(unittest.TestCase):
         ):
             provider.list_models()
         self.assertEqual(rpc.call_args.kwargs["timeout"], 10)
-
-    def test_selects_latest_tesseract_windows_installer(self):
-        listing = (
-            '<a href="tesseract-ocr-w64-setup-5.9.0.exe">old</a>'
-            '<a href="tesseract-ocr-w64-setup-5.10.0.exe">new</a>'
-        )
-        url = latest_windows_installer_url(listing, "https://example.com/tesseract/")
-        self.assertEqual(
-            url,
-            "https://example.com/tesseract/tesseract-ocr-w64-setup-5.10.0.exe",
-        )
-
-    def test_selects_trusted_tesseract_installer_from_github_fallback(self):
-        url = latest_github_installer_url(
-            {
-                "assets": [
-                    {
-                        "name": "tesseract-ocr-w64-setup-5.4.0.exe",
-                        "browser_download_url": (
-                            "https://github.com/UB-Mannheim/tesseract/releases/download/"
-                            "v5.4.0/tesseract-ocr-w64-setup-5.4.0.exe"
-                        ),
-                    }
-                ]
-            }
-        )
-        self.assertTrue(url.endswith("tesseract-ocr-w64-setup-5.4.0.exe"))
 
     def test_codex_send_resumes_thread_after_app_restart(self):
         provider = CodexProvider()
@@ -2991,11 +3121,12 @@ class MaryCoreTest(unittest.TestCase):
         self.assertIn("CONTEXTO TRANSFERIDO", claude.prompts[-1])
         self.assertIn("Criar treinamento de PIX", claude.prompts[-1])
 
-    def test_mary_search_is_automatic_for_codex_claude_and_optional_prefix(self):
+    def test_mary_vr_prompt_is_tool_driven_without_automatic_search(self):
         class FakeProvider:
             def __init__(self, native_id):
                 self.native_id = native_id
                 self.prompts = []
+                self.sent = threading.Event()
 
             def available(self):
                 return True
@@ -3005,6 +3136,7 @@ class MaryCoreTest(unittest.TestCase):
 
             def send_message(self, *args):
                 self.prompts.append(args[5])
+                self.sent.set()
 
             def close(self):
                 pass
@@ -3035,7 +3167,10 @@ class MaryCoreTest(unittest.TestCase):
             ("claude", "Mary: ", claude),
         ):
             conversation_id = orchestrator.new_conversation(
-                provider_name, defer_provider_start=True
+                provider_name,
+                defer_provider_start=True,
+                vr_enabled=True,
+                vr_mode="vr",
             )
             typed = prefix + "Qual a função de entrada do operador?"
             provider_text = (
@@ -3043,25 +3178,24 @@ class MaryCoreTest(unittest.TestCase):
                 + "\n\nINSTRUÇÕES INTERNAS DE ANEXOS E SKILLS: "
                 + "planilha fiscal cadastro fornecedor não usar na busca."
             )
-            orchestrator.send(
-                conversation_id,
-                provider_text,
-                lambda _event: None,
-                search_text=typed,
-            )
-            for _ in range(100):
-                if provider.prompts:
-                    break
-                import time
-
-                time.sleep(0.005)
+            with patch.object(database, "search") as local_search:
+                orchestrator.send(
+                    conversation_id,
+                    provider_text,
+                    lambda _event: None,
+                    search_text=typed,
+                )
+                self.assertTrue(provider.sent.wait(10))
+            local_search.assert_not_called()
             prompt = provider.prompts[-1]
-            self.assertEqual(prompt.count("CONTEXTO LOCAL VR"), 1)
-            self.assertIn("[Funcao 102](https://wiki.example", prompt)
+            self.assertIn("Contrato de acesso tool-driven do modo VR", prompt)
+            self.assertIn("vr_search", prompt)
+            self.assertIn("<user_request>", prompt)
+            self.assertNotIn("CONTEXTO LOCAL VR RECUPERADO", prompt)
             self.assertNotIn("funcao-102--3742.md", prompt)
-            self.assertIn("Atalho O", prompt)
+            self.assertNotIn("Atalho O", prompt)
 
-    def test_disabled_vr_flow_sends_plain_prompt_without_local_search(self):
+    def test_disabled_vr_flow_sends_direct_prompt_without_local_search(self):
         class FakeProvider:
             def __init__(self):
                 self.prompts = []
@@ -3100,7 +3234,13 @@ class MaryCoreTest(unittest.TestCase):
                 time.sleep(0.005)
 
         local_search.assert_not_called()
-        self.assertEqual(provider.prompts[-1], "Responda apenas com a LLM.")
+        prompt = provider.prompts[-1]
+        self.assertIn("FONTES LOCAIS OPCIONAIS — SOMENTE LEITURA:", prompt)
+        self.assertIn("SOLICITAÇÃO DO USUÁRIO:\nResponda apenas com a LLM.", prompt)
+        self.assertNotIn("Contrato de acesso tool-driven", prompt)
+        self.assertNotIn("vr_sources", prompt)
+        self.assertNotIn("vr_search", prompt)
+        self.assertNotIn("vr_read", prompt)
 
     def test_short_continuation_keeps_previous_user_subject(self):
         database = initialize_workspace(self.settings)
@@ -3151,46 +3291,37 @@ class MaryCoreTest(unittest.TestCase):
         self.assertIn("valide essa informação", query.casefold())
         self.assertTrue(query.endswith("Tente validar o código fonte novamente."))
 
-    def test_missing_or_ambiguous_local_sources_forbid_high_confidence(self):
+    def test_missing_local_sources_are_answered_by_tools_not_automatic_search(self):
+        from vrsoft_extractor.mary.personality import (
+            VRMASTER_TOOL_DRIVEN_ACCESS_POLICY,
+        )
+
         database = initialize_workspace(self.settings)
         orchestrator = ChatOrchestrator(self.settings, database)
-        with patch.object(database, "search", return_value=[]):
+        with patch.object(
+            database, "search", side_effect=AssertionError("sem retrieval")
+        ):
             missing = orchestrator._enrich_prompt("Pergunta sem fonte", "sem fonte")
-        self.assertIn("nenhuma fonte validada", missing)
-        self.assertIn("não invente referência", missing)
+        self.assertIn(VRMASTER_TOOL_DRIVEN_ACCESS_POLICY, missing)
+        self.assertIn("CONSULTA SOB DEMANDA", missing)
+        self.assertIn("vr_sources", missing)
+        self.assertIn("vr_search", missing)
+        self.assertIn("vr_read", missing)
+        self.assertNotIn("CONTEXTO LOCAL VR RECUPERADO", missing)
+        self.assertNotIn("nenhuma fonte validada", missing)
         self.assertIn("não invalida fatos e passos confirmados", missing)
         self.assertIn('"clique neste botão"', missing)
         self.assertIn("Código Java decompilado e indexado", missing)
 
-        ambiguous_rows = [
-            {
-                "title": title,
-                "url": f"https://example.com/{index}",
-                "source": "wiki",
-                "module": "PDV",
-                "local_path": f"conhecimento/{index}.md",
-                "excerpt": "Trecho",
-                "matched_terms": ["teste"],
-                "coverage": 1.0,
-                "confidence": 0.9,
-                "score": score,
-            }
-            for index, (title, score) in enumerate((("Fonte A", 100), ("Fonte B", 95)))
-        ]
-        with patch.object(database, "search", return_value=ambiguous_rows):
-            ambiguous = orchestrator._enrich_prompt("Teste", "teste")
-        self.assertIn("diferem menos de 10%", ambiguous)
-        self.assertIn("não apresente a conclusão com confiança alta", ambiguous)
-
-    def test_local_search_error_is_not_reported_as_no_results(self):
+    def test_local_search_error_is_no_longer_part_of_the_vr_prompt(self):
         database = initialize_workspace(self.settings)
         orchestrator = ChatOrchestrator(self.settings, database)
         with patch.object(database, "search", side_effect=RuntimeError("offline")):
             enriched = orchestrator._enrich_prompt("Como configurar o PIX?")
 
-        self.assertIn("ERRO AO CONSULTAR A BASE", enriched)
-        self.assertIn("não significa ausência de resultados", enriched)
+        self.assertNotIn("ERRO AO CONSULTAR A BASE", enriched)
         self.assertNotIn("nenhuma fonte validada foi encontrada", enriched)
+        self.assertIn("CONSULTA SOB DEMANDA", enriched)
 
     def test_cloned_context_is_sent_on_first_turn(self):
         class FakeProvider:
@@ -3225,6 +3356,58 @@ class MaryCoreTest(unittest.TestCase):
 
             time.sleep(0.005)
         self.assertIn("CONTEXTO TRANSFERIDO", fake.prompts[-1])
+        self.assertIn("Criar treinamento de PIX", fake.prompts[-1])
+
+    def test_failed_first_turn_replays_cloned_context_on_retry(self):
+        class FlakyProvider:
+            def __init__(self):
+                self.prompts = []
+                self.failures = 1
+
+            def available(self):
+                return True
+
+            def start_conversation(self, *_args):
+                return f"native-{len(self.prompts)}"
+
+            def send_message(self, *args):
+                if self.failures:
+                    self.failures -= 1
+                    raise RuntimeError("falha simulada")
+                self.prompts.append(args[5])
+
+            def close(self):
+                pass
+
+        database = initialize_workspace(self.settings)
+        orchestrator = ChatOrchestrator(self.settings, database)
+        fake = FlakyProvider()
+        orchestrator.providers = {"codex": fake, "claude": fake}
+        source = orchestrator.new_conversation("codex", defer_provider_start=True)
+        database.add_message(source, "user", "Criar treinamento de PIX")
+        database.add_message(source, "assistant", "Use a rotina financeira.")
+        clone = orchestrator.clone(source, "claude")
+
+        first_turn_done = threading.Event()
+
+        def first_callback(event):
+            if event.kind == "turn_completed":
+                first_turn_done.set()
+
+        orchestrator.send(clone, "Continue o trabalho", first_callback)
+        self.assertTrue(first_turn_done.wait(5))
+        orchestrator.drain_turn_finalizations()
+        self.assertEqual(database.get_conversation(clone)["native_id"], "")
+
+        orchestrator.send(clone, "Continue o trabalho", lambda _event: None)
+        for _ in range(100):
+            if fake.prompts:
+                break
+            import time
+
+            time.sleep(0.005)
+        self.assertIn("CONTEXTO TRANSFERIDO", fake.prompts[-1])
+        self.assertIn("Contexto clonado de outra conversa", fake.prompts[-1])
         self.assertIn("Criar treinamento de PIX", fake.prompts[-1])
 
 

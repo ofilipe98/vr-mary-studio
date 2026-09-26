@@ -32,6 +32,26 @@ def _activity_cards(item) -> list:
     return cards
 
 
+def _find_item(item, name):
+    if item.objectName() == name:
+        return item
+    for child in item.childItems():
+        found = _find_item(child, name)
+        if found is not None:
+            return found
+    return None
+
+
+def _text_values(item) -> list:
+    values = []
+    for child in item.childItems():
+        text = child.property("text")
+        if isinstance(text, str) and text:
+            values.append(text)
+        values.extend(_text_values(child))
+    return values
+
+
 def _create_activity(engine):
     activity_path = QML_DIR / "components/VrChatActivity.qml"
     component = QQmlComponent(engine, QUrl.fromLocalFile(str(activity_path)))
@@ -167,6 +187,84 @@ def test_tool_error_disclosure_deduplicates_and_fits_narrow_layout(qml_env):
         assert item.implicitHeight() < 60
     finally:
         window.close()
+        item.deleteLater()
+        app.processEvents()
+
+
+def test_tool_group_card_expands_member_rows_with_their_own_data(qml_env):
+    app, engine, frontend, chat, studio = qml_env
+    component = QQmlComponent(
+        engine, QUrl.fromLocalFile(str(QML_DIR / "components/VrToolGroupCard.qml"))
+    )
+    assert not component.isError(), [e.toString() for e in component.errors()]
+    item = component.create()
+    assert item is not None
+    try:
+        item.setProperty("modelData", {
+            "id": "grp",
+            "kind": "action_group",
+            "state": "completed",
+            "text": "2 ferramentas executadas",
+            "items": [
+                {
+                    "id": "cmd-1",
+                    "kind": "tool",
+                    "itemType": "commandExecution",
+                    "state": "completed",
+                    "command": "rg calcularImposto",
+                    "durationLabel": "500ms",
+                    "output": "src/service.py:374",
+                },
+                {
+                    "id": "read-1",
+                    "kind": "tool",
+                    "itemType": "fileRead",
+                    "state": "completed",
+                    "text": "Leu normalizer.py",
+                    "detail": "def normalize(): pass",
+                },
+            ],
+        })
+        item.setProperty("groupExpanded", True)
+        app.processEvents()
+        command = _find_item(item, "commandCard")
+        tool = _find_item(item, "toolCard")
+        assert command is not None
+        assert tool is not None
+        # Member rows must render the event they represent, not the card defaults.
+        assert command.property("commandText") == "rg calcularImposto"
+        assert tool.property("titleText") == "Leu normalizer.py"
+    finally:
+        item.deleteLater()
+        app.processEvents()
+
+
+def test_tool_card_expansion_offers_no_copy_action(qml_env):
+    app, engine, frontend, chat, studio = qml_env
+    component = QQmlComponent(
+        engine, QUrl.fromLocalFile(str(QML_DIR / "components/VrToolCard.qml"))
+    )
+    assert not component.isError(), [e.toString() for e in component.errors()]
+    item = component.create()
+    assert item is not None
+    try:
+        item.setWidth(480)
+        item.setProperty("modelData", {
+            "id": "todo-1",
+            "kind": "tool",
+            "itemType": "mcpToolCall",
+            "state": "completed",
+            "text": "3 todos",
+            "detail": '[{"content": "Localizar a nota", "status": "in_progress"}]',
+        })
+        item.setProperty("detailExpanded", True)
+        app.processEvents()
+        assert _find_item(item, "toolDetails") is not None
+        # T3 Code keeps tool details copy-free; selection is the copy path.
+        texts = _text_values(item)
+        assert "Copiar" not in texts
+        assert "Detalhes" not in texts
+    finally:
         item.deleteLater()
         app.processEvents()
 
@@ -407,6 +505,242 @@ def test_vr_chat_activity_live_turn_keeps_tool_trace_visible(qml_env):
         app.processEvents()
 
 
+def test_activity_row_disclosure_survives_streamed_updates(qml_env):
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtQuick import QQuickWindow
+    from PySide6.QtTest import QTest
+    app, engine, frontend, chat, studio = qml_env
+    warning_count = len(engine._qml_warnings)
+    _component, item = _create_activity(engine)
+    window = QQuickWindow()
+    item.setParentItem(window.contentItem())
+    window.show()
+    live_items = [
+        {
+            "id": "tool-1",
+            "kind": "tool",
+            "itemType": "mcpToolCall",
+            "state": "completed",
+            "text": "Ler Foo.java",
+            "detail": "linha 1\nlinha 2",
+            "durationLabel": "21ms",
+        },
+        {
+            "id": "tool-2",
+            "kind": "tool",
+            "itemType": "mcpToolCall",
+            "state": "completed",
+            "text": "grep calcularImposto",
+            "detail": "match 1\nmatch 2",
+            "durationLabel": "4.6s",
+        },
+    ]
+    try:
+        window.resize(520, 500)
+        item.setWidth(480)
+        item.setProperty("scopeKey", "activity:1:0")
+        item.setProperty("items", live_items)
+        item.setProperty("running", True)
+        QTest.qWait(120)
+        cards = [card for card in _activity_cards(item) if card.objectName() == "toolCard"]
+        assert len(cards) == 2
+        card = cards[0]
+        header = _find_item(card, "toolHeader")
+        assert header is not None
+        scene = header.mapToScene(QPointF(header.width() - 12, header.height() / 2))
+        QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, QPoint(int(scene.x()), int(scene.y())))
+        QTest.qWait(80)
+        assert card.property("detailExpanded") is True
+
+        # A streamed activityData update rebuilds every delegate; the expanded
+        # row must come back expanded instead of silently collapsing.
+        item.setProperty(
+            "items",
+            [dict(live_items[0], detail="linha 1\nlinha 2\nlinha 3"), live_items[1]],
+        )
+        QTest.qWait(120)
+        rebuilt = [card for card in _activity_cards(item) if card.objectName() == "toolCard"]
+        assert len(rebuilt) == 2
+        assert rebuilt[0].property("titleText") == "Ler Foo.java"
+        assert rebuilt[0].property("detailExpanded") is True
+        assert rebuilt[1].property("detailExpanded") is False
+
+        # The second click on the same row toggles it closed for good.
+        scene = rebuilt[0].mapToScene(QPointF(rebuilt[0].width() - 12, 14))
+        QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, QPoint(int(scene.x()), int(scene.y())))
+        QTest.qWait(80)
+        assert rebuilt[0].property("detailExpanded") is False
+        assert len(engine._qml_warnings) == warning_count
+    finally:
+        window.close()
+        item.deleteLater()
+        app.processEvents()
+
+
+def test_activity_group_and_member_disclosures_survive_updates(qml_env):
+    from PySide6.QtCore import QPoint, QPointF, Qt
+    from PySide6.QtQuick import QQuickWindow
+    from PySide6.QtTest import QTest
+    app, engine, frontend, chat, studio = qml_env
+    warning_count = len(engine._qml_warnings)
+    _component, item = _create_activity(engine)
+    window = QQuickWindow()
+    item.setParentItem(window.contentItem())
+    window.show()
+    groups = [
+        {
+            "id": "grp-1",
+            "kind": "action_group",
+            "state": "completed",
+            "text": "2 ferramentas executadas",
+            "items": [
+                {
+                    "id": "member-1",
+                    "kind": "tool",
+                    "itemType": "mcpToolCall",
+                    "state": "completed",
+                    "text": "Leu normalizer.py",
+                    "detail": "def normalize(): pass",
+                },
+                {
+                    "id": "member-2",
+                    "kind": "tool",
+                    "itemType": "mcpToolCall",
+                    "state": "completed",
+                    "text": "Leu parser.py",
+                    "detail": "def parse(): pass",
+                },
+            ],
+        }
+    ]
+
+    def click(item, x_inset=12):
+        scene = item.mapToScene(QPointF(item.width() - x_inset, 14))
+        QTest.mouseClick(window, Qt.LeftButton, Qt.NoModifier, QPoint(int(scene.x()), int(scene.y())))
+        QTest.qWait(100)
+
+    try:
+        window.resize(560, 520)
+        item.setWidth(520)
+        item.setProperty("scopeKey", "activity:2:0")
+        item.setProperty("items", groups)
+        item.setProperty("running", True)
+        QTest.qWait(150)
+        group = _find_item(item, "toolGroupCard")
+        assert group is not None
+        click(_find_item(group, "toolGroupHeader"))
+        assert group.property("groupExpanded") is True
+
+        cards = [card for card in _activity_cards(item) if card.objectName() == "toolCard"]
+        assert len(cards) == 2
+        click(_find_item(cards[0], "toolHeader"))
+        assert cards[0].property("detailExpanded") is True
+
+        # A streamed activityData update rebuilds the group and its members.
+        item.setProperty(
+            "items",
+            [dict(groups[0], items=[dict(entry, detail=entry["detail"] + "\nnovo") for entry in groups[0]["items"]])],
+        )
+        QTest.qWait(150)
+        rebuilt_group = _find_item(item, "toolGroupCard")
+        assert rebuilt_group is not None
+        assert rebuilt_group.property("groupExpanded") is True
+        rebuilt_cards = [card for card in _activity_cards(item) if card.objectName() == "toolCard"]
+        assert len(rebuilt_cards) == 2
+        member = [card for card in rebuilt_cards if card.property("titleText") == "Leu normalizer.py"]
+        assert member
+        assert member[0].property("detailExpanded") is True
+        assert rebuilt_cards[1].property("detailExpanded") is False
+        assert len(engine._qml_warnings) == warning_count
+    finally:
+        window.close()
+        item.deleteLater()
+        app.processEvents()
+
+
+def _walk_items(item) -> list:
+    values = [item]
+    for child in item.childItems():
+        values.extend(_walk_items(child))
+    return values
+
+
+def test_live_activity_header_keeps_shimmer_until_turn_settles(qml_env):
+    app, engine, frontend, chat, studio = qml_env
+    warning_count = len(engine._qml_warnings)
+    _component, item = _create_activity(engine)
+    try:
+        item.setProperty("items", [
+            {
+                "id": "grep-1",
+                "kind": "tool",
+                "itemType": "tool",
+                "state": "completed",
+                "text": 'Pesquisou "NotaSaidaFiscalService"',
+            }
+        ])
+        item.setProperty("running", True)
+        item.setProperty("statusText", "Trabalhando…")
+        item.setProperty("elapsedLabel", "47s")
+        app.processEvents()
+
+        assert item.property("headerLabel") == "Trabalhando há 47s"
+        shimmers = [
+            node for node in _walk_items(item)
+            if "Shimmer" in node.metaObject().className()
+        ]
+        assert shimmers
+        assert shimmers[0].property("shimmering") is True
+
+        item.setProperty("running", False)
+        item.setProperty("statusText", "Concluído")
+        app.processEvents()
+        assert item.property("headerLabel") == "Concluído em 47s"
+        assert shimmers[0].property("shimmering") is False
+        assert len(engine._qml_warnings) == warning_count
+    finally:
+        item.deleteLater()
+        app.processEvents()
+
+
+def test_vr_chat_activity_divider_separates_header_from_visible_tools(qml_env):
+    app, engine, frontend, chat, studio = qml_env
+    warning_count = len(engine._qml_warnings)
+    _component, item = _create_activity(engine)
+    live_items = [
+        {
+            "id": "cmd-divider",
+            "kind": "tool",
+            "itemType": "commandExecution",
+            "state": "running",
+            "text": "Executando os testes",
+            "command": "python -m pytest -q",
+        }
+    ]
+    try:
+        item.setProperty("items", live_items)
+        item.setProperty("running", True)
+        app.processEvents()
+
+        divider = _find_item(item, "activityHeaderDivider")
+        assert divider is not None
+        assert divider.property("visible") is True
+
+        item.setProperty("running", False)
+        item.setProperty("statusText", "Concluído")
+        item.setProperty("expanded", False)
+        app.processEvents()
+        assert divider.property("visible") is False
+
+        item.setProperty("expanded", True)
+        app.processEvents()
+        assert divider.property("visible") is True
+        assert len(engine._qml_warnings) == warning_count
+    finally:
+        item.deleteLater()
+        app.processEvents()
+
+
 def test_vr_chat_activity_settled_failure_keeps_failure_summary_visible(qml_env):
     app, engine, frontend, chat, studio = qml_env
     warning_count = len(engine._qml_warnings)
@@ -449,5 +783,137 @@ def test_vr_chat_activity_settled_failure_keeps_failure_summary_visible(qml_env)
         assert cards[0].property("titleText") == "Falha terminal mais recente", cards[0].property("modelData")
         assert len(engine._qml_warnings) == warning_count
     finally:
+        item.deleteLater()
+        app.processEvents()
+
+
+def _create_progress_bar(engine):
+    component = QQmlComponent(
+        engine, QUrl.fromLocalFile(str(QML_DIR / "components/VrProgressBar.qml"))
+    )
+    assert not component.isError(), [error.toString() for error in component.errors()]
+    item = component.create()
+    assert item is not None
+    return component, item
+
+
+def test_progress_bar_percentage_text_uses_real_position(qml_env):
+    app, engine, _frontend, _chat, _studio = qml_env
+    warning_count = len(engine._qml_warnings)
+    _component, item = _create_progress_bar(engine)
+    try:
+        item.setProperty("width", 240)
+        item.setProperty("from", 0)
+        item.setProperty("to", 100)
+
+        assert item.property("percentageText") == "0%"
+        item.setProperty("value", 4)
+        app.processEvents()
+        assert item.property("percentageText") == "4.0%"
+        item.setProperty("value", 42.5)
+        app.processEvents()
+        assert item.property("percentageText") == "43%"
+        item.setProperty("value", 100)
+        app.processEvents()
+        assert item.property("percentageText") == "100%"
+        assert len(engine._qml_warnings) == warning_count
+    finally:
+        item.deleteLater()
+        app.processEvents()
+
+
+def test_progress_bar_caption_and_low_percentage_fill_stay_legible(qml_env):
+    app, engine, frontend, _chat, _studio = qml_env
+    frontend.setReduceMotion(True)
+    _component, item = _create_progress_bar(engine)
+    try:
+        item.setProperty("width", 240)
+        item.setProperty("barHeight", 6)
+        item.setProperty("from", 0)
+        item.setProperty("to", 100)
+        item.setProperty("value", 2)
+        app.processEvents()
+
+        assert item.property("implicitHeight") == 6
+        fill = _find_item(item, "progressFill")
+        assert fill is not None
+        assert fill.property("visible") is True
+        # The rounded cap never collapses below the track height.
+        assert fill.property("width") == 6
+        assert abs(fill.property("radius") - 3) < 0.01
+
+        item.setProperty("showPercentage", True)
+        app.processEvents()
+        label = _find_item(item, "progressPercentage")
+        assert label is not None
+        assert label.property("visible") is True
+        assert label.property("text") == "2.0%"
+        assert item.property("implicitHeight") > 6
+    finally:
+        frontend.setReduceMotion(False)
+        item.deleteLater()
+        app.processEvents()
+
+
+def test_progress_bar_indeterminate_modes_follow_reduce_motion(qml_env):
+    app, engine, frontend, _chat, _studio = qml_env
+    warning_count = len(engine._qml_warnings)
+    frontend.setReduceMotion(False)
+    _component, item = _create_progress_bar(engine)
+    try:
+        item.setProperty("width", 240)
+        item.setProperty("indeterminate", True)
+        app.processEvents()
+
+        beam = _find_item(item, "progressBeam")
+        static_beam = _find_item(item, "progressStaticBeam")
+        assert beam.property("visible") is True
+        assert static_beam.property("visible") is False
+
+        frontend.setReduceMotion(True)
+        app.processEvents()
+        assert beam.property("visible") is False
+        assert static_beam.property("visible") is True
+        assert static_beam.property("width") == 240
+        assert len(engine._qml_warnings) == warning_count
+    finally:
+        frontend.setReduceMotion(False)
+        item.deleteLater()
+        app.processEvents()
+
+
+def test_progress_bar_marker_and_thresholds_stay_inside_track(qml_env):
+    app, engine, frontend, _chat, _studio = qml_env
+    frontend.setReduceMotion(True)
+    _component, item = _create_progress_bar(engine)
+    try:
+        item.setProperty("width", 200)
+        item.setProperty("barHeight", 6)
+        item.setProperty("from", 0)
+        item.setProperty("to", 100)
+        app.processEvents()
+
+        marker = _find_item(item, "progressMarker")
+        assert marker is not None
+        assert marker.property("visible") is False
+
+        item.setProperty("markerPosition", 0.5)
+        app.processEvents()
+        assert marker.property("visible") is True
+        assert abs(marker.property("x") - 100) < 2
+
+        item.setProperty("markerPosition", 2)
+        app.processEvents()
+        assert abs(marker.property("x") - 198) < 2
+
+        accent = item.property("accentColor")
+        item.setProperty("value", 42)
+        app.processEvents()
+        assert item.property("effectiveAccentColor") == accent
+        item.setProperty("warningThreshold", 0.4)
+        app.processEvents()
+        assert item.property("effectiveAccentColor") != accent
+    finally:
+        frontend.setReduceMotion(False)
         item.deleteLater()
         app.processEvents()

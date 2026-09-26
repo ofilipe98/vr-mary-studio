@@ -21,24 +21,6 @@ class ProviderSettingsDomain:
     def __setattr__(self, name, value):
         setattr(self._owner, name, value)
 
-    def _provider_context_window(self) -> int:
-        item = self._current_model_item()
-        candidates = (
-            item.get("contextWindow"),
-            item.get("context_window"),
-            item.get("contextWindowTokens"),
-            item.get("inputTokenLimit"),
-        )
-        for value in candidates:
-            try:
-                parsed = int(value or 0)
-            except (TypeError, ValueError):
-                continue
-            if parsed > 0:
-                return parsed
-        return 0
-
-
     def _enabled_provider_names(self) -> list[str]:
         enabled: list[str] = []
         for provider in ("codex", "claude", "opencode", "antigravity"):
@@ -658,6 +640,17 @@ class ProviderSettingsDomain:
             self._ultra_application_contexts = []
         if not self._ultra_application_contexts:
             self._code_analysis_enabled = False
+        self._code_analysis_auto_enable_pending = self._stored_bool(
+            self._preferences.value(
+                self._workspace_research_preference(
+                    "code_analysis_auto_enable_pending"
+                ),
+                False,
+            ),
+            False,
+        )
+        if not self._ultra_application_contexts:
+            self._code_analysis_auto_enable_pending = False
         release_preference = self._workspace_research_preference(
             "code_analysis_release"
         )
@@ -877,15 +870,30 @@ class ProviderSettingsDomain:
         if not self._code_analysis_release_items and self._code_analysis_enabled:
             self._code_analysis_enabled = False
             self._preferences.setValue("research/code_analysis_enabled", False)
-        self._preferences.sync()
-        self._senior_profile_enabled = self._stored_bool(
-            self._preferences.value("research/senior_profile_enabled", False),
+        expert_profile_preference = "research/expert_profile_enabled"
+        has_expert_profile_preference = self._preferences.contains(
+            expert_profile_preference
+        )
+        stored_expert_profile = self._preferences.value(
+            expert_profile_preference
+            if has_expert_profile_preference
+            else "research/senior_profile_enabled",
             False,
         )
+        self._expert_profile_enabled = self._stored_bool(
+            stored_expert_profile,
+            False,
+        )
+        if not has_expert_profile_preference:
+            self._preferences.setValue(
+                expert_profile_preference,
+                self._expert_profile_enabled,
+            )
         saved_mode = self._normalize_response_mode(
             self._preferences.value("research/response_mode", "auto")
         )
-        self._vr_response_mode = saved_mode if self._senior_profile_enabled else "auto"
+        self._vr_response_mode = saved_mode if self._expert_profile_enabled else "auto"
+        self._preferences.sync()
 
 
     def _apply_research_config(self) -> None:
@@ -946,5 +954,13 @@ class ProviderSettingsDomain:
         return f"research/workspaces/{workspace_id}/{name}"
 
 
-    def resumeResearch(self, grant_budget: bool = False) -> None:  # noqa: N802
-        return None
+    def resumeResearch(self) -> None:  # noqa: N802
+        owner = self._owner
+        research = owner.resumableResearch
+        run_id = str(research.get("run_id") or "")
+        if not run_id or owner.turnRunning:
+            return
+        owner._send_message(
+            str(research.get("request_text") or ""),
+            resume_run_id=run_id,
+        )

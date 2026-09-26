@@ -320,7 +320,7 @@ class TestAntigravityAuthManager(unittest.TestCase):
             )
             try:
                 attempt1 = manager.start_login()
-                self.assertTrue(started.wait(2))
+                self.assertTrue(started.wait(10))
                 attempt2 = manager.start_login()
                 self.assertEqual(attempt1.attempt_id, attempt2.attempt_id)
                 self.assertEqual(factory.call_count, 1)

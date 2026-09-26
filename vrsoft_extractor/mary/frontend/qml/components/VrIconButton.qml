@@ -7,10 +7,12 @@ Button {
 
     property url iconSource
     property string iconKind: ""
+    property bool iconFilled: false
     property string symbol: ""
     property bool round: false
     property color foreground: Theme.palette.text
-    property real iconSize: Theme.iconSize
+    // T3 icon buttons render a size-4 (16) glyph unless the caller overrides.
+    property real iconSize: Theme.iconSmall
 
     implicitWidth: Theme.iconButtonNormal
     implicitHeight: Theme.iconButtonNormal
@@ -41,6 +43,7 @@ Button {
             width: control.iconSize
             height: control.iconSize
             kind: control.iconKind
+            filled: control.iconFilled
             foreground: control.foreground
         }
         Text {

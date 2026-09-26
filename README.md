@@ -12,9 +12,9 @@ validação, scripts auxiliares e arquivos gerados.
 
 - Sincronização completa/incremental da VRWiki via API MediaWiki.
 - Sincronização somente leitura da Wiki autenticada do Endoo, com sessão
-  Playwright, paginação, imagens, OCR, hash e retomada segura.
+  Playwright, paginação, imagens, hash e retomada segura.
 - Sincronização autenticada do Movidesk KB com Chrome/Playwright e diagnóstico de bloqueios.
-- Markdown canônico, imagens locais, OCR por+eng, hash e versionamento.
+- Markdown canônico, imagens locais, hash e versionamento.
 - Classificação em Fiscal, ADM_FIN_ESTOQUE, PDV, Multimodulo e Revisar.
 - Catálogo determinístico de 169 produtos/equipes baseado em `produtos_filas.md`.
 - SQLite FTS5, `catalogo.jsonl` e `INDEX.md`.
@@ -46,8 +46,8 @@ Em uma máquina nova:
 
 O Codex pesquisa o catálogo e os documentos localmente, encaminha a análise aos
 especialistas VR e cita os arquivos usados. O VR Norte Studio continua sendo o
-gerenciador opcional para sincronizar Wiki/KB, revisar classificações, executar
-OCR e administrar vídeos. Credenciais, cookies, logs e vídeos completos não são
+gerenciador opcional para sincronizar Wiki/KB, revisar classificações e
+administrar vídeos. Credenciais, cookies, logs e vídeos completos não são
 incluídos no projeto portátil.
 
 No chat do VR Norte Studio, o botão animado **VR** concentra a pesquisa local e
@@ -124,7 +124,7 @@ O sincronizador abre `/wiki` com a sessão Endoo salva, captura apenas os
 cabeçalhos necessários da API e aceita exclusivamente endpoints de leitura sob
 `/wiki`. Endpoints `/wiki/manage` são bloqueados pelo cliente. A conta precisa
 da permissão `wiki_visualizar`; sessão expirada abre o login visível na
-interface. Artigos, imagens e OCR são persistidos como origem `endoo`, enquanto
+interface. Artigos e imagens são persistidos como origem `endoo`, enquanto
 a VRWiki pública permanece como `vrwiki`.
 
 ### Acesso completo ao Movidesk KB
@@ -622,7 +622,7 @@ mantendo o módulo atual até a aprovação humana.
 ## Central de Revisão
 
 - A fila abre com itens pendentes e maior risco primeiro.
-- A busca cobre título, ID, produto, categoria, evidências, Markdown e OCR.
+- A busca cobre título, ID, produto, categoria, evidências e Markdown.
 - Os filtros incluem fonte, módulos, confiança, produto, categoria, estado,
   período e riscos especiais.
 - Cada decisão pode aprovar, manter o módulo atual, adiar ou reabrir e aceitar
@@ -715,12 +715,6 @@ Fontes dos instaladores: [Codex](https://learn.chatgpt.com/docs/codex/cli),
   OpenCode mantêm esse estado local, e a exclusão definitiva remove a sessão
   OpenCode correspondente.
 - Use **Clonar para outro provedor** para transferir o contexto entre agentes.
-
-## OCR
-
-Na tela Configurações, use **Instalar OCR portátil por+eng**. O mecanismo e os
-idiomas são instalados em `VRProject\tools\tesseract`; nada é enviado a um
-serviço online.
 
 ## Empacotamento
 

@@ -6,117 +6,210 @@ ProgressBar {
     id: root
 
     property color accentColor: Theme.palette.brandOrange
-    property real barHeight: 6
-    property color trackColor: {
-        if (typeof Theme !== "undefined" && Theme.palette && Theme.palette.chatControl) {
-            return Qt.tint(Theme.palette.chatControl, Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.12))
-        }
-        return Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.15)
-    }
+    property real barHeight: Theme.scaledGeometry(6)
+    // Opt-in caption ("xx%") rendered above the track from the real position.
+    property bool showPercentage: false
+    // Optional vertical tick over the track (e.g. pace marker); -1 hides it.
+    property real markerPosition: -1
+    property color markerColor: Theme.palette.mutedText
+    // Optional semantic color switch; -1 disables the threshold.
+    property real warningThreshold: -1
+    property real dangerThreshold: -1
+    property string accessibleName: "Progresso"
+    // Optional discrete segmented pills (T3 Code TaskSegments parity)
+    property int segments: 0
+    property int activeSegment: -1
 
+    readonly property bool reducedMotion: typeof frontend !== "undefined"
+        && frontend !== null && frontend.reduceMotion
     readonly property real clampedPosition: Math.max(0, Math.min(1, root.position))
     property real animatedPosition: clampedPosition
 
+    readonly property color effectiveAccentColor: {
+        if (root.dangerThreshold >= 0 && root.clampedPosition >= root.dangerThreshold)
+            return Theme.palette.danger
+        if (root.warningThreshold >= 0 && root.clampedPosition >= root.warningThreshold)
+            return Theme.palette.warning
+        return root.accentColor
+    }
+
+    property color trackColor: {
+        if (typeof Theme !== "undefined" && Theme.palette && Theme.palette.chatControl) {
+            return Qt.tint(Theme.palette.chatControl, Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.12))
+        }
+        return Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.15)
+    }
+
+    // Single percent formatter for every progress surface: whole numbers from
+    // 10% up, one decimal below it (dot separator, matching the bridges).
+    function formatPercent(ratio) {
+        var value = Number(ratio)
+        if (!(value > 0))
+            return "0%"
+        var percent = Math.min(1, value) * 100
+        if (percent >= 100)
+            return "100%"
+        if (percent >= 10)
+            return Math.round(percent) + "%"
+        return percent.toFixed(1) + "%"
+    }
+
+    readonly property string percentageText: root.formatPercent(root.clampedPosition)
+
     Behavior on animatedPosition {
-        enabled: !root.indeterminate && (typeof frontend === "undefined" || !frontend.reduceMotion)
+        enabled: !root.indeterminate && !root.reducedMotion
         NumberAnimation {
             duration: root.clampedPosition < root.animatedPosition ? 0 : 220
             easing.type: Easing.OutCubic
         }
     }
 
-    implicitHeight: barHeight
+    implicitHeight: root.barHeight + (root.showPercentage ? percentageLabel.implicitHeight + Theme.spaceXs : 0)
     implicitWidth: 200
-    clip: true
+    padding: 0
 
-    background: Rectangle {
-        implicitHeight: root.barHeight
-        radius: root.barHeight / 2
-        color: root.trackColor
-    }
+    Accessible.name: root.accessibleName
+    Accessible.description: root.indeterminate ? "" : root.percentageText
+
+    // The track lives inside contentItem (caption row above it); the style
+    // background would otherwise stretch behind the whole control.
+    background: Item {}
 
     contentItem: Item {
-        implicitHeight: root.barHeight
-        clip: true
-
-        // Indeterminate Primary Beam
-        Rectangle {
-            id: beam1
-            visible: root.indeterminate && (typeof frontend === "undefined" || !frontend.reduceMotion)
+        Item {
+            id: barArea
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
             height: root.barHeight
-            radius: root.barHeight / 2
-            width: Math.max(70, root.width * 0.38)
-            gradient: Gradient {
-                orientation: Gradient.Horizontal
-                GradientStop { position: 0.0; color: Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.0) }
-                GradientStop { position: 0.25; color: root.accentColor }
-                GradientStop { position: 0.75; color: root.accentColor }
-                GradientStop { position: 1.0; color: Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.0) }
-            }
 
-            SequentialAnimation on x {
-                running: root.indeterminate && root.visible && (typeof frontend === "undefined" || !frontend.reduceMotion)
-                loops: Animation.Infinite
-                NumberAnimation {
-                    from: -beam1.width
-                    to: Math.max(1, root.width)
-                    duration: 1350
-                    easing.type: Easing.InOutQuad
+            // Discrete segmented layout when segments is configured (2 to 10 steps)
+            Row {
+                id: segmentRow
+                anchors.fill: parent
+                spacing: 2
+                visible: root.segments > 1 && root.segments <= 10
+                Repeater {
+                    model: root.segments
+                    Rectangle {
+                        width: Math.max(2, (segmentRow.width - (root.segments - 1) * segmentRow.spacing) / root.segments)
+                        height: root.barHeight
+                        radius: root.barHeight / 2
+                        color: {
+                            var comp = Math.round(root.value)
+                            if (index < comp)
+                                return root.effectiveAccentColor
+                            if (index === comp && root.activeSegment >= 0)
+                                return (Theme.palette.brandOrange || "#ff7200")
+                            return root.trackColor
+                        }
+                    }
                 }
             }
-        }
 
-        // Indeterminate Secondary Pulse Beam (Faster, luminous accent)
-        Rectangle {
-            id: beam2
-            visible: root.indeterminate && (typeof frontend === "undefined" || !frontend.reduceMotion)
-            height: root.barHeight
-            radius: root.barHeight / 2
-            width: Math.max(36, root.width * 0.20)
-            opacity: 0.8
-            gradient: Gradient {
-                orientation: Gradient.Horizontal
-                GradientStop { position: 0.0; color: Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.0) }
-                GradientStop { position: 0.5; color: Qt.lighter(root.accentColor, 1.25) }
-                GradientStop { position: 1.0; color: Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.0) }
+            Rectangle {
+                id: track
+                objectName: "progressTrack"
+                anchors.fill: parent
+                radius: root.barHeight / 2
+                color: root.trackColor
+                visible: !(root.segments > 1 && root.segments <= 10)
             }
 
-            SequentialAnimation on x {
-                running: root.indeterminate && root.visible && (typeof frontend === "undefined" || !frontend.reduceMotion)
-                loops: Animation.Infinite
-                PauseAnimation { duration: 250 }
-                NumberAnimation {
-                    from: -beam2.width
-                    to: Math.max(1, root.width)
-                    duration: 1050
-                    easing.type: Easing.InOutCubic
+            Item {
+                id: barClip
+                anchors.fill: parent
+                clip: true
+                visible: !(root.segments > 1 && root.segments <= 10)
+
+                // Indeterminate beam: one soft sweep instead of competing rails.
+                Rectangle {
+                    id: beam
+                    objectName: "progressBeam"
+                    visible: root.indeterminate && !root.reducedMotion
+                    height: root.barHeight
+                    radius: root.barHeight / 2
+                    width: Math.max(Theme.scaledGeometry(56), barClip.width * 0.45)
+                    gradient: Gradient {
+                        orientation: Gradient.Horizontal
+                        GradientStop { position: 0.0; color: Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.0) }
+                        GradientStop { position: 0.35; color: root.effectiveAccentColor }
+                        GradientStop { position: 0.65; color: root.effectiveAccentColor }
+                        GradientStop { position: 1.0; color: Qt.rgba(root.effectiveAccentColor.r, root.effectiveAccentColor.g, root.effectiveAccentColor.b, 0.0) }
+                    }
+
+                    NumberAnimation on x {
+                        running: root.indeterminate && root.visible && !root.reducedMotion
+                        loops: Animation.Infinite
+                        from: -beam.width
+                        to: barClip.width
+                        duration: 1200
+                        easing.type: Easing.InOutCubic
+                    }
+                }
+
+                // Reduced motion fallback: a settled track reads as "running",
+                // never as a fabricated percentage.
+                Rectangle {
+                    objectName: "progressStaticBeam"
+                    visible: root.indeterminate && root.reducedMotion
+                    anchors.fill: parent
+                    radius: root.barHeight / 2
+                    color: root.effectiveAccentColor
+                    opacity: 0.28
+                }
+
+                // Determinate fill. The rounded cap never collapses below the
+                // track height, so low percentages stay legible as a dot.
+                Rectangle {
+                    id: fillBar
+                    objectName: "progressFill"
+                    visible: !root.indeterminate && root.animatedPosition > 0
+                    height: root.barHeight
+                    width: root.animatedPosition > 0
+                        ? Math.max(Math.min(root.barHeight, barClip.width),
+                                   Math.min(barClip.width, root.animatedPosition * barClip.width))
+                        : 0
+                    radius: Math.min(root.barHeight / 2, width / 2)
+
+                    gradient: Gradient {
+                        orientation: Gradient.Horizontal
+                        GradientStop { position: 0.0; color: root.effectiveAccentColor }
+                        GradientStop { position: 1.0; color: Qt.lighter(root.effectiveAccentColor, 1.10) }
+                    }
                 }
             }
+
+            Rectangle {
+                id: marker
+                objectName: "progressMarker"
+                visible: root.markerPosition >= 0 && !(root.segments > 1 && root.segments <= 10)
+                x: Math.max(0, Math.min(barClip.width - width, barClip.width * Math.max(0, Math.min(1, root.markerPosition))))
+                anchors.verticalCenter: parent.verticalCenter
+                width: 2
+                height: root.barHeight + Theme.spaceXs
+                radius: 1
+                color: root.markerColor
+                opacity: 0.7
+            }
         }
 
-        // Reduced motion fallback for indeterminate mode
-        Rectangle {
-            visible: root.indeterminate && typeof frontend !== "undefined" && frontend.reduceMotion
-            anchors.centerIn: parent
-            height: root.barHeight
-            radius: root.barHeight / 2
-            width: root.width * 0.5
-            color: root.accentColor
-            opacity: 0.6
-        }
+        Item {
+            id: percentageLabel
+            visible: root.showPercentage
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: visible ? Theme.scaledGeometry(16) : 0
 
-        // Determinate fill
-        Rectangle {
-            id: fillBar
-            visible: !root.indeterminate && root.animatedPosition > 0
-            height: root.barHeight
-            radius: root.barHeight / 2
-            width: Math.max(0, Math.min(root.width, root.animatedPosition * root.width))
-
-            gradient: Gradient {
-                orientation: Gradient.Horizontal
-                GradientStop { position: 0.0; color: root.accentColor }
-                GradientStop { position: 1.0; color: Qt.lighter(root.accentColor, 1.10) }
+            Text {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.percentageText
+                color: Theme.palette.text
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSizeCaption
+                renderType: Theme.textRenderType
             }
         }
     }

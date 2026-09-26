@@ -1,0 +1,36 @@
+#!/bin/sh
+# VRStudio: incrementa o build da versao em cada commit (docs/DEVELOPMENT.md).
+# Pule com: SKIP_VERSION_BUMP=1 git commit ...
+
+set -e
+
+if [ "${SKIP_VERSION_BUMP:-}" = "1" ]; then
+    exit 0
+fi
+
+Root="$(git rev-parse --show-toplevel)"
+cd "$Root"
+
+VERSION_FILES="pyproject.toml vrsoft_extractor/__init__.py installer/VRNorteStudio.iss installer/VRNorteStudio.version.txt"
+
+for file in $VERSION_FILES; do
+    if git diff --cached --name-only | grep -Fxq "$file"; then
+        exit 0
+    fi
+done
+
+if [ -f "$Root/.venv/Scripts/python.exe" ]; then
+    Python="$Root/.venv/Scripts/python.exe"
+elif command -v python >/dev/null 2>&1; then
+    Python=python
+else
+    echo "pre-commit: Python indisponivel; impossivel incrementar a versao." >&2
+    echo "pre-commit: instale a venv ou use SKIP_VERSION_BUMP=1 para commitar sem bump." >&2
+    exit 1
+fi
+
+"$Python" scripts/bump_version.py --commit
+
+for file in $VERSION_FILES; do
+    git add "$file"
+done

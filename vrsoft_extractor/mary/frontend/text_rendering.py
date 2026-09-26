@@ -109,15 +109,56 @@ class CodeSyntaxHighlighter(QSyntaxHighlighter):
 
 FENCE_START_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})([^\r\n]*)$")
 
+# T3 `.chat-markdown h1..h6{line-height:1.3}`.
+_MARKDOWN_HEADING_LINE_HEIGHT = 1.3
+
 # Kept local to avoid a circular import with file_links (which reuses fences).
-_FILE_REFERENCE_SCHEMES = ("vr-file:", "file:")
+_INLINE_CODE_REFERENCE_SCHEMES = ("vr-file:", "file:", "vr-code:")
 
 
-def _is_file_reference_anchor(fragment_format: QTextCharFormat) -> bool:
+def _is_inline_code_reference_anchor(fragment_format: QTextCharFormat) -> bool:
     if not fragment_format.isAnchor():
         return False
     href = str(fragment_format.anchorHref() or "").strip().casefold()
-    return href.startswith(_FILE_REFERENCE_SCHEMES)
+    return href.startswith(_INLINE_CODE_REFERENCE_SCHEMES)
+
+
+def _chip_kind(fragment_format: QTextCharFormat) -> str:
+    """Classify one text fragment as a chip the QML overlay must paint."""
+    if _is_inline_code_reference_anchor(fragment_format):
+        href = str(fragment_format.anchorHref() or "").strip().casefold()
+        return "code-ref" if href.startswith("vr-code:") else "file"
+    return "code" if fragment_format.fontFixedPitch() else ""
+
+
+def message_chip_ranges(document: QTextDocument) -> list[dict[str, int | str]]:
+    """Locate inline-code and reference chips for the QML overlay layer.
+
+    Qt paints a flat rectangle per fragment; the layer re-paints these spans
+    with the T3 rounded chip (muted fill + hairline border) while the text
+    itself stays selectable and clickable.
+    """
+    if document is None:
+        return []
+    ranges: list[dict[str, int | str]] = []
+    block = document.firstBlock()
+    while block.isValid():
+        if block.blockFormat().hasProperty(int(QTextFormat.BlockCodeLanguage)):
+            block = block.next()
+            continue
+        block_end = block.position() + max(0, block.length() - 1)
+        iterator = block.begin()
+        while not iterator.atEnd():
+            fragment = iterator.fragment()
+            kind = _chip_kind(fragment.charFormat())
+            if kind:
+                start = fragment.position()
+                end = min(fragment.position() + fragment.length(), block_end)
+                if end > start:
+                    ranges.append({"start": start, "end": end, "kind": kind})
+            iterator += 1
+        block = block.next()
+    return ranges
 
 
 def fenced_blocks(markdown: str) -> list[dict[str, str]]:
@@ -332,9 +373,12 @@ def _style_document_tables(
     document: QTextDocument,
     palette: dict[str, str],
     ranges: list[tuple[int, int]],
+    base_px: float = 0.0,
 ) -> None:
     """Style tables with quiet horizontal rules and record their extents."""
     border = QColor(palette["chatBorder"])
+    # `.chat-markdown table{font-size:.75rem}` against the text-sm body.
+    cell_px = max(1, round(base_px * 0.857)) if base_px else 0
 
     def visit(frame) -> None:
         for child in frame.childFrames():
@@ -344,7 +388,8 @@ def _style_document_tables(
                 table_format.setBorderBrush(border)
                 table_format.setBorderStyle(QTextFrameFormat.BorderStyle_Solid)
                 table_format.setBorderCollapse(False)
-                table_format.setCellPadding(8)
+                # `.chat-markdown th,.chat-markdown td{padding:.45rem .75rem}`.
+                table_format.setCellPadding(7)
                 table_format.setCellSpacing(0)
                 table_format.setWidth(QTextLength(QTextLength.PercentageLength, 100))
                 child.setFormat(table_format)
@@ -368,12 +413,14 @@ def _style_document_tables(
                         cell_format.setBorderBrush(border)
                         cell_format.setBorderStyle(QTextFrameFormat.BorderStyle_Solid)
                         cell_format.clearBackground()
-                        if row == 0:
-                            header_cursor = cell.firstCursorPosition()
-                            header_cursor.setPosition(cell.lastPosition(), QTextCursor.KeepAnchor)
-                            header_style = QTextCharFormat()
-                            header_style.setFontWeight(QFont.Weight.DemiBold)
-                            header_cursor.mergeCharFormat(header_style)
+                        if cell_px:
+                            cell_cursor = cell.firstCursorPosition()
+                            cell_cursor.setPosition(cell.lastPosition(), QTextCursor.KeepAnchor)
+                            cell_style = QTextCharFormat()
+                            cell_style.setProperty(QTextFormat.FontPixelSize, cell_px)
+                            if row == 0:
+                                cell_style.setFontWeight(QFont.Weight.DemiBold)
+                            cell_cursor.mergeCharFormat(cell_style)
                         cell.setFormat(cell_format)
                 ranges.append((child.firstPosition(), child.lastPosition() + 1))
             visit(child)
@@ -422,13 +469,29 @@ def _apply_message_document_style(
     code_background = QColor(palette["inlineCodeSurface"])
     quote_background = QColor(palette["quoteSurface"])
     rule_color = QColor(palette["chatDivider"])
-    document.setIndentWidth(18)
     base_px = document.defaultFont().pixelSize()
     if base_px <= 0:
         base_px = document.defaultFont().pointSizeF() * 96 / 72
+    # T3 `.chat-markdown` rhythm: `.65rem` block margins, `1.25rem 0 .5rem`
+    # headings, `1.25rem` list gutter, `.25rem` between list items and `.8rem`
+    # blockquote padding. rem is relative to the 14px text-sm body, so the
+    # values are expressed as ratios and follow a custom interface size.
+    block_gap = max(1, round(base_px * 0.743))
+    heading_gap_top = max(1, round(base_px * 1.4286))
+    heading_gap_bottom = max(1, round(base_px * 0.5714))
+    list_gap = max(1, round(base_px * 0.2857))
+    quote_inset = max(1, round(base_px * 0.914))
+    document.setIndentWidth(max(1, round(base_px * 1.4286)))
+    # `.chat-markdown h1{1.25rem} h2{1.125rem} h3{1rem} h4-h6{.875rem}` against a
+    # text-sm (14) body, expressed as ratios so a custom interface size keeps
+    # the same hierarchy.
+    heading_ratios = {1: 1.4286, 2: 1.2857, 3: 1.1429}
+    # T3 `.chat-markdown :not(pre)>code{font-size:.75rem}` and
+    # `.chat-markdown table{font-size:.75rem}` against the same 14px body.
+    inline_code_ratio = 0.857
 
     table_ranges: list[tuple[int, int]] = []
-    _style_document_tables(document, palette, table_ranges)
+    _style_document_tables(document, palette, table_ranges, base_px)
     rule_budget = _count_horizontal_rules(markdown)
 
     def inside_table(position: int) -> bool:
@@ -449,7 +512,7 @@ def _apply_message_document_style(
     while block.isValid():
         block_format = block.blockFormat()
         block_format.setLineHeight(
-            base_px * 1.6,
+            base_px * 1.625,
             QTextBlockFormat.FixedHeight.value,
         )
         heading_level = block_format.headingLevel()
@@ -460,7 +523,7 @@ def _apply_message_document_style(
         next_block = block.next()
         if in_table:
             block_format.clearBackground()
-            block_format.setLineHeight(base_px * 1.5, QTextBlockFormat.FixedHeight.value)
+            block_format.setLineHeight(base_px * 1.625, QTextBlockFormat.FixedHeight.value)
             block_format.setTopMargin(0)
             block_format.setBottomMargin(0)
             block_format.setLeftMargin(0)
@@ -469,42 +532,48 @@ def _apply_message_document_style(
             block_cursor.setBlockFormat(block_format)
         if not in_table:
             if heading_level:
-                block_format.setLineHeight(base_px * 1.9, QTextBlockFormat.FixedHeight.value)
-                block_format.setTopMargin(0 if block == document.firstBlock() else 22)
-                block_format.setBottomMargin(8)
+                block_format.setLineHeight(
+                    base_px * _MARKDOWN_HEADING_LINE_HEIGHT,
+                    QTextBlockFormat.FixedHeight.value,
+                )
+                block_format.setTopMargin(
+                    0 if block == document.firstBlock() else heading_gap_top)
+                block_format.setBottomMargin(heading_gap_bottom)
             elif text_list is not None:
                 same_list_continues = (
                     next_block.isValid() and next_block.textList() is text_list
                 )
                 block_format.setTopMargin(0)
-                block_format.setBottomMargin(3 if same_list_continues else 10)
+                block_format.setBottomMargin(
+                    list_gap if same_list_continues else block_gap)
             elif quote_level:
                 quote_continues = next_block.isValid() and bool(
                     quote_level_of(next_block.blockFormat())
                 )
-                block_format.setTopMargin(0 if previous_quote else 12)
-                block_format.setBottomMargin(0 if quote_continues else 11)
-                block_format.setLeftMargin(10)
+                block_format.setTopMargin(0 if previous_quote else block_gap)
+                block_format.setBottomMargin(0 if quote_continues else block_gap)
+                block_format.setLeftMargin(quote_inset)
                 block_format.setRightMargin(6)
                 block_format.setBackground(QBrush(quote_background))
             elif code_flag:
                 code_continues = next_block.isValid() and is_code_block(
                     next_block.blockFormat()
                 )
-                block_format.setTopMargin(0 if previous_code else 12)
-                block_format.setBottomMargin(0 if code_continues else 10)
-                block_format.setLeftMargin(10)
-                block_format.setRightMargin(10)
+                block_format.setTopMargin(0 if previous_code else block_gap)
+                block_format.setBottomMargin(0 if code_continues else block_gap)
+                block_format.setLeftMargin(quote_inset)
+                block_format.setRightMargin(quote_inset)
                 block_format.setBackground(QBrush(code_background))
             elif not block.text() and rule_budget > 0:
                 rule_budget -= 1
                 block_format.setLineHeight(2.0, QTextBlockFormat.FixedHeight.value)
                 block_format.setBackground(QBrush(rule_color))
-                block_format.setTopMargin(10)
-                block_format.setBottomMargin(12)
+                block_format.setTopMargin(block_gap)
+                block_format.setBottomMargin(block_gap)
             else:
                 block_format.setTopMargin(0)
-                block_format.setBottomMargin(0 if not next_block.isValid() else 12)
+                block_format.setBottomMargin(
+                    0 if not next_block.isValid() else block_gap)
             previous_quote = bool(quote_level)
             previous_code = code_flag
             block_cursor = QTextCursor(block)
@@ -541,24 +610,37 @@ def _apply_message_document_style(
                 fragment_cursor.mergeCharFormat(image_format)
                 iterator += 1
                 continue
-            if code_flag or fragment_format.fontFixedPitch():
+            if code_flag:
+                # Code blocks follow the monospace preference; `.chat-markdown
+                # pre code{font-size:var(--font-size-code)}`.
                 fragment_format.setFontFamilies([monospace_family])
                 fragment_format.setProperty(QTextFormat.FontPixelSize, round(base_px * 0.9))
                 fragment_format.setForeground(code_text)
                 fragment_format.setBackground(code_background)
-            elif _is_file_reference_anchor(fragment_format):
+            elif fragment_format.fontFixedPitch():
+                # `.chat-markdown :not(pre)>code{font-size:.75rem}`. The fill
+                # comes from the QML chip layer, which can round the corners.
+                fragment_format.setFontFamilies([monospace_family])
+                fragment_format.setProperty(
+                    QTextFormat.FontPixelSize, max(1, round(base_px * inline_code_ratio)))
+                fragment_format.setForeground(code_text)
+                fragment_format.clearBackground()
+            elif _is_inline_code_reference_anchor(fragment_format):
                 # t3code parity: the chip reads like inline code and follows the
                 # active theme foreground instead of the fixed link accent.
                 fragment_format.setFontFamilies([monospace_family])
-                fragment_format.setProperty(QTextFormat.FontPixelSize, round(base_px * 0.9))
+                fragment_format.setProperty(
+                    QTextFormat.FontPixelSize, max(1, round(base_px * inline_code_ratio)))
                 fragment_format.setForeground(code_text)
-                fragment_format.setBackground(code_background)
+                fragment_format.clearBackground()
                 fragment_format.setFontUnderline(False)
             elif heading_level:
                 fragment_format.setProperty(QTextFormat.FontPixelSize,
-                    round(base_px * {1: 1.5, 2: 1.28, 3: 1.1}.get(heading_level, 1.0)))
+                    round(base_px * heading_ratios.get(heading_level, 1.0)))
                 fragment_format.setFontWeight(QFont.Weight.DemiBold)
-                fragment_format.setForeground(heading_color)
+                # T3 `.chat-markdown h6{color:var(--contrast-muted-foreground)}`.
+                fragment_format.setForeground(
+                    muted_color if heading_level >= 6 else heading_color)
             elif fragment_format.isAnchor():
                 fragment_format.setForeground(link_color)
                 fragment_format.setFontUnderline(False)

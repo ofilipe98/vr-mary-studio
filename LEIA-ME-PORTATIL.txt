@@ -18,7 +18,6 @@ Servicos opcionais
 - Wiki, KB e Endoo: exigem internet e as credenciais do usuario.
 - O pacote nao inclui o acervo sincronizado de Wiki e KB; use as sincronizacoes
   do aplicativo no ambiente de destino quando precisar dessas fontes.
-- OCR: pode ser instalado de forma portatil pela tela Configuracoes.
 
 Seguranca e integridade
 - Confira o SHA-256 do ZIP em "SHA256SUMS.txt" antes de distribuir.

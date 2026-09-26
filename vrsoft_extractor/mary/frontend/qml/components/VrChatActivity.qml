@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "../theme"
+import "../theme/ToolIcons.js" as ToolIcons
 
 Rectangle {
     id: root
@@ -14,14 +15,26 @@ Rectangle {
     property string taskStep: ""
     property bool running: false
     property bool expanded: false
+    // Identity of the rendered activity (messageKey). Delegate reuse across
+    // messages must not leak expanded rows into another conversation row.
+    property string scopeKey: ""
+    // Row disclosure state keyed by item id, owned by the activity instead of
+    // the transient Repeater delegates so streamed activityData updates that
+    // rebuild every row never silently collapse an expanded row.
+    property var disclosureIds: ({})
     readonly property string headerLabel: root.headerText()
+    readonly property bool reduceMotion: typeof frontend !== "undefined" && frontend !== null
+        ? frontend.reduceMotion : false
     signal toggleRequested()
+    signal disclosureToggled(bool expanded)
+
+    onScopeKeyChanged: root.resetDisclosure()
 
     implicitHeight: content.implicitHeight
     color: "transparent"
     clip: true
     Behavior on implicitHeight {
-        enabled: !(typeof frontend !== "undefined" && frontend.reduceMotion) && !root.running
+        enabled: !root.reduceMotion && !root.running
         NumberAnimation { duration: Theme.fastDuration }
     }
 
@@ -33,6 +46,7 @@ Rectangle {
 
         Rectangle {
             id: activityHeader
+            objectName: "activityHeader"
             activeFocusOnTab: true
             Accessible.role: Accessible.Button
             Accessible.name: root.headerText()
@@ -42,23 +56,32 @@ Rectangle {
             border.width: activeFocus ? 1 : 0
             border.color: Theme.palette.focus
             Layout.fillWidth: true
-            Layout.preferredHeight: Theme.scaledGeometry(30)
-            radius: Theme.scaledGeometry(7)
+            Layout.preferredHeight: Theme.scaledGeometry(28)
+            radius: Theme.scaledGeometry(6)
             color: "transparent"
 
             RowLayout {
                 anchors.fill: parent
+                anchors.leftMargin: Theme.scaledGeometry(2)
+                anchors.rightMargin: Theme.scaledGeometry(2)
                 spacing: Theme.scaledGeometry(6)
 
-                VrLineIcon {
-                    Layout.preferredWidth: Theme.iconSmall
-                    Layout.preferredHeight: Theme.iconSmall
-                    kind: root.headerIcon()
-                    foreground: Theme.palette.mutedText
+                Item {
+                    Layout.preferredWidth: Theme.scaledGeometry(24)
+                    Layout.preferredHeight: Theme.scaledGeometry(24)
+                    VrLineIcon {
+                        anchors.centerIn: parent
+                        width: Theme.iconSmall
+                        height: Theme.iconSmall
+                        kind: root.headerIcon()
+                        opacity: 0.9
+                        foreground: Theme.palette.mutedText
+                    }
                 }
 
                 VrShimmerText {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     text: root.headerText()
                     running: root.running
                     color: Theme.palette.mutedText
@@ -69,20 +92,27 @@ Rectangle {
                     elide: Text.ElideRight
                 }
                 VrLineIcon {
-                    Layout.preferredWidth: Theme.iconSmall
-                    Layout.preferredHeight: Theme.iconSmall
-                    kind: root.expanded ? "chevronDown" : "chevronRight"
+                    Layout.preferredWidth: Theme.iconMicro
+                    Layout.preferredHeight: Theme.iconMicro
+                    kind: "chevronRight"
                     foreground: Theme.palette.mutedText
+                    opacity: 0.7
+                    rotation: root.expanded ? 90 : 0
+                    Behavior on rotation {
+                        enabled: !root.reduceMotion
+                        NumberAnimation { duration: Theme.fastDuration; easing.type: Easing.OutCubic }
+                    }
                 }
             }
 
-            HoverHandler { cursorShape: Qt.PointingHandCursor }
+            HoverHandler { id: headerHover; cursorShape: Qt.PointingHandCursor }
             TapHandler { onTapped: root.toggleRequested() }
         }
 
-        // Horizontal hairline separator below header
         Rectangle {
-            visible: (root.expanded || root.visibleItems().length > 0) && root.items && root.items.length > 0
+            objectName: "activityHeaderDivider"
+            visible: (root.expanded || root.visibleItems().length > 0)
+                && root.items && root.items.length > 0
             Layout.fillWidth: true
             Layout.preferredHeight: 1
             color: Theme.palette.chatBorder
@@ -117,6 +147,10 @@ Rectangle {
                     id: activityItemLoader
                     required property var modelData
                     Layout.fillWidth: true
+                    readonly property string disclosureKey: root.disclosureKeyFor(activityItemLoader.modelData)
+                    // Mirrors the commentary branch of sourceComponent: only
+                    // cards expose disclosureHost/disclosureExpanded.
+                    readonly property bool supportsDisclosure: String(activityItemLoader.modelData.kind || "") !== "commentary"
                     sourceComponent: {
                         var k = String(modelData.kind || "")
                         var t = String(modelData.itemType || "")
@@ -126,8 +160,32 @@ Rectangle {
                         if (t === "commandExecution" || k === "command") return commandCardComponent
                         return toolCardComponent
                     }
+                    onModelDataChanged: root.restoreDisclosure(activityItemLoader)
+                    onDisclosureKeyChanged: root.restoreDisclosure(activityItemLoader)
                     onLoaded: {
-                        if (item) item.modelData = activityItemLoader.modelData
+                        if (item && activityItemLoader.supportsDisclosure)
+                            item.disclosureHost = root
+                        root.restoreDisclosure(activityItemLoader)
+                    }
+                    // A real binding (not an onLoaded assignment) so a reused
+                    // delegate always renders the current event data.
+                    Binding {
+                        target: activityItemLoader.item
+                        property: "modelData"
+                        value: activityItemLoader.modelData
+                        when: activityItemLoader.item !== null
+                        restoreMode: Binding.RestoreNone
+                    }
+                    Connections {
+                        target: activityItemLoader.item
+                        // Commentary bodies have no disclosure signal.
+                        ignoreUnknownSignals: true
+                        function onDisclosureToggled(expanded) {
+                            if (activityItemLoader.disclosureKey === "")
+                                return
+                            root.setDisclosureExpanded(activityItemLoader.disclosureKey, expanded)
+                            root.disclosureToggled(expanded)
+                        }
                     }
                 }
             }
@@ -137,49 +195,15 @@ Rectangle {
     Component {
         id: commentaryComponent
 
-        TextEdit {
+        VrMarkdownContent {
             id: commentaryText
             property var modelData: ({})
             readonly property string displayText: (typeof frontend !== "undefined" && frontend)
                 ? frontend.displayMarkdown(String(modelData.text || ""))
                 : String(modelData.text || "")
-            text: displayText
-            textFormat: TextEdit.MarkdownText
-            readOnly: true
-            activeFocusOnPress: false
-            selectByMouse: true
-            wrapMode: TextEdit.Wrap
-            color: Theme.palette.text
-            font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSize(13)
-            font.weight: Font.Normal
-            onLinkActivated: link => {
-                var value = String(link)
-                if (value.indexOf("vr-file:") === 0 || value.indexOf("file:") === 0) {
-                    if (typeof chat !== "undefined" && chat) chat.openFileReference(value)
-                } else if (typeof studio !== "undefined" && studio) {
-                    studio.openExternalUrl(value)
-                }
-            }
-            onTextChanged: frontend.styleMessageDocument(
-                textDocument,
-                displayText
-            )
-            Connections {
-                target: frontend
-                function onThemeChanged() {
-                    frontend.styleMessageDocument(
-                        commentaryText.textDocument,
-                        commentaryText.displayText
-                    )
-                }
-                function onTypographyChanged() {
-                    frontend.styleMessageDocument(
-                        commentaryText.textDocument,
-                        commentaryText.displayText
-                    )
-                }
-            }
+            bodyObjectName: "activityCommentaryBody"
+            markdown: commentaryText.displayText
+            fontPixelSize: Theme.fontSize(13)
         }
     }
 
@@ -229,13 +253,7 @@ Rectangle {
     }
 
     function itemIcon(item) {
-        if (item.state === "error" || item.state === "failed") return "close"
-        var itemType = String(item.itemType || "")
-        var text = String(item.text || "").toLowerCase()
-        if (itemType === "commandExecution" || text.indexOf("command") >= 0 || text.indexOf("terminal") >= 0 || text.indexOf("git ") >= 0 || text.indexOf("running git") >= 0 || text.indexOf("running ") === 0) {
-            return "terminalPrompt"
-        }
-        return "hammer"
+        return ToolIcons.kindFor(item)
     }
 
     function headerIcon() {
@@ -268,5 +286,40 @@ Rectangle {
 
         // Successful settled work is disclosed by the Concluído em ... header.
         return []
+    }
+
+    function disclosureKeyFor(item) {
+        if (!item)
+            return ""
+        var id = item.id
+        if (id === undefined || id === null)
+            return ""
+        var key = String(id)
+        return key.length > 0 ? key : ""
+    }
+
+    function isDisclosureExpanded(key) {
+        return key !== "" && root.disclosureIds[key] === true
+    }
+
+    function setDisclosureExpanded(key, expanded) {
+        if (key === "")
+            return
+        var next = {}
+        for (var current in root.disclosureIds)
+            next[current] = root.disclosureIds[current]
+        if (expanded) next[key] = true
+        else delete next[key]
+        root.disclosureIds = next
+    }
+
+    function resetDisclosure() {
+        root.disclosureIds = ({})
+    }
+
+    function restoreDisclosure(loader) {
+        if (!loader || !loader.item || !loader.supportsDisclosure)
+            return
+        loader.item.disclosureExpanded = root.isDisclosureExpanded(loader.disclosureKey)
     }
 }

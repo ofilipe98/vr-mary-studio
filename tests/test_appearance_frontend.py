@@ -83,9 +83,9 @@ def test_sliders_reset_keyboard_motion_and_environment(appearance):
     combo = item(window, "environmentIdentificationCombo")
     combo.forceActiveFocus()
     QTest.keyClick(window, Qt.Key_Down)
-    assert frontend.environmentIdentification == "artwork"
+    assert frontend.environmentIdentification == "none"
     click(window, "environmentReset")
-    assert frontend.environmentIdentification == "pill"
+    assert frontend.environmentIdentification == "artwork"
 
 
 def test_typography_advanced_font_search_size_and_wrap(appearance):
@@ -174,7 +174,6 @@ def test_preferences_reach_brand_header_and_actual_composer(tmp_path):
         frontend.setEnvironmentIdentification("artwork")
         QTest.qWait(20)
         assert item(window, "environmentArtwork").isVisible()
-        assert not item(window, "environmentVersionPill").isVisible()
         frontend.setEnvironmentIdentification("none")
         assert not item(window, "environmentArtwork").isVisible()
         chat = engine.rootContext().contextProperty("chat")
@@ -205,12 +204,12 @@ def test_preferences_reach_brand_header_and_actual_composer(tmp_path):
         QTest.qWait(100)
         window.findChild(QObject, "settingsPage").setProperty("tabIndex", 4)
         QTest.qWait(50)
-        assert item(window, "interfaceFontFamily").property("font").pixelSize() == 20
+        assert item(window, "interfaceFontFamily").property("font").pixelSize() == 21
         frontend.setInterfaceTypography("Arial", 16)
         QTest.qWait(20)
         assert window.property("font").family() == "Arial"
         assert window.property("font").pixelSize() == 24
-        assert item(window, "interfaceFontFamily").property("font").pixelSize() == 20
+        assert item(window, "interfaceFontFamily").property("font").pixelSize() == 21
         assert not warnings
 
 

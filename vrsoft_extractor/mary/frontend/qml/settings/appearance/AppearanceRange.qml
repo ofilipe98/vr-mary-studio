@@ -19,7 +19,7 @@ RowLayout {
     spacing: Theme.scaledGeometry(12)
     Rectangle {
         Layout.preferredWidth: (root.suffix === " ms" ? 64 : 48) * Theme.textScale
-        implicitHeight: Math.max(24, Theme.fontSize(11) + 10); radius: Theme.scaledGeometry(8)
+        implicitHeight: Math.max(24, Theme.fontSizeMicro + 10); radius: Theme.scaledGeometry(8)
         color: Theme.palette.mutedSurface || Theme.palette.surfaceRaised
         Text {
             anchors.centerIn: parent; text: Math.round(slider.value) + root.suffix

@@ -31,7 +31,6 @@ from .content import (
 from .db import MaryDatabase
 from .indexer import export_catalog
 from .models import KnowledgeDocument, SyncStats, utc_now
-from .ocr import OcrManager
 
 
 LOGGER = logging.getLogger(__name__)
@@ -68,7 +67,6 @@ class MovideskSync:
         self.database = database
         self.progress = progress or (lambda _message: None)
         self.allow_session_takeover = allow_session_takeover
-        self.ocr = OcrManager(settings.tesseract_dir)
 
     def sync(self, headed: bool = False, limit: int | None = None) -> SyncStats:
         ensure_playwright_chromium(progress=self.progress)
@@ -800,7 +798,6 @@ class MovideskSync:
         markdown, image_urls = html_to_markdown(html, page.url)
         replacements: dict[str, str] = {}
         assets: list[Path] = []
-        ocr_parts: list[str] = []
 
         def browser_fetch(url: str) -> bytes:
             response = context.request.get(url, timeout=60_000)
@@ -818,9 +815,6 @@ class MovideskSync:
                 assets.append(local)
                 relative = Path("..") / ".." / ".." / ".." / "assets" / "kb" / local.name
                 replacements[image_url] = str(relative)
-                result = self.ocr.extract(local)
-                if result.text:
-                    ocr_parts.append(f"### {local.name}\n\n{result.text}")
             except Exception:
                 LOGGER.warning("Não foi possível baixar imagem KB: %s", image_url)
         markdown = replace_asset_urls(markdown, replacements)
@@ -844,11 +838,8 @@ class MovideskSync:
             revision=updated_at,
             category=breadcrumb,
             assets=[str(path) for path in assets],
-            ocr_text="\n\n".join(ocr_parts),
         )
-        document.content_hash = sha256_text(
-            "\n".join([document.title, markdown, document.ocr_text])
-        )
+        document.content_hash = sha256_text("\n".join([document.title, markdown]))
         return document
 
     @staticmethod

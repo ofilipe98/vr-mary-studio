@@ -7,6 +7,9 @@ Canvas {
 
     property string kind: ""
     property color foreground: Theme.palette.mutedText
+    // Solid variants (favorite star, filled badges) paint the Lucide geometry
+    // as a shape instead of a stroke; T3 uses the same split for star toggles.
+    property bool filled: false
     // 2.0 on the 24-unit grid matches Lucide's official 2px stroke, the same
     // geometry T3 renders; at 12-20px the effective stroke stays 1.0-1.7px.
     property real strokeWidth: 2.0
@@ -16,6 +19,7 @@ Canvas {
 
     onKindChanged: requestPaint()
     onForegroundChanged: requestPaint()
+    onFilledChanged: requestPaint()
     onStrokeWidthChanged: requestPaint()
     onWidthChanged: requestPaint()
     onHeightChanged: requestPaint()
@@ -58,7 +62,7 @@ Canvas {
             for (var i = 0; i < paths.length; ++i) {
                 ctx.beginPath()
                 ctx.path = paths[i]
-                ctx.stroke()
+                if (root.filled) ctx.fill(); else ctx.stroke()
             }
             return
         }

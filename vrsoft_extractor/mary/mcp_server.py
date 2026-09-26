@@ -25,7 +25,7 @@ from .knowledge_router import KnowledgeRouter
 from .retrieval.service import RetrievalService
 from .chat_tools import (
     all_vr_tools_specs,
-    run_bounded_vr_tool,
+    run_vr_tool,
     VR_SOURCES_TOOL_NAME,
     VR_SEARCH_TOOL_NAME,
     VR_READ_TOOL_NAME,
@@ -61,16 +61,19 @@ def run_mcp_server(
     root_path: Path | None = None,
     context_path: str = "",
     monitor_session_id: str = "",
+    vr_tools_enabled: bool = True,
 ) -> None:
     root = root_path or Path(os.environ.get("VR_STUDIO_ROOT", ".")).resolve()
     settings = load_vr_settings(root=root)
-    database = MaryDatabase(settings.database_path, root=settings.root)
-    router = KnowledgeRouter(
-        database,
-        settings.root,
-        disabled_origins=("endoo",) if not settings.endoo_wiki_enabled else (),
-    )
-    service = RetrievalService(router)
+    service = None
+    if vr_tools_enabled:
+        database = MaryDatabase(settings.database_path, root=settings.root)
+        router = KnowledgeRouter(
+            database,
+            settings.root,
+            disabled_origins=("endoo",) if not settings.endoo_wiki_enabled else (),
+        )
+        service = RetrievalService(router)
     try:
         monitor = (
             MonitorAdapter.from_path(settings.state_dir / "vrmonitor.json")
@@ -82,8 +85,6 @@ def run_mcp_server(
 
     stdin = sys.stdin
     stdout = sys.stdout
-    calls = 0
-    output_chars = 0
 
     while True:
         try:
@@ -121,7 +122,9 @@ def run_mcp_server(
             if req_id is not None:
                 write_message(stdout, {"jsonrpc": "2.0", "id": req_id, "result": {}})
         elif method == "tools/list":
-            specs = all_vr_tools_specs()
+            # OFF keeps the built-in server available only for non-VR
+            # integrations (VRMonitor); the VR tools belong to VR/Ultra.
+            specs = all_vr_tools_specs() if vr_tools_enabled else []
             if monitor is not None:
                 specs = (*specs, *monitor_tool_specs())
             mcp_tools = [
@@ -142,28 +145,24 @@ def run_mcp_server(
             tool_name = params.get("name")
             arguments = params.get("arguments") or {}
             try:
+                if (
+                    tool_name in (VR_SEARCH_TOOL_NAME, VR_SOURCES_TOOL_NAME, VR_READ_TOOL_NAME)
+                    and not vr_tools_enabled
+                ):
+                    raise ValueError("Tool VR indisponível no modo OFF.")
                 scope = load_scope(context_path)
-                if calls >= 24:
-                    raise ValueError("Limite de consultas deste turno atingido.")
-                calls += 1
                 if tool_name in (VR_SEARCH_TOOL_NAME, VR_SOURCES_TOOL_NAME, VR_READ_TOOL_NAME):
-                    exec_res = run_bounded_vr_tool(
-                        tool_name, arguments, service, max(0, 96000 - output_chars), **scope
-                    )
+                    if service is None:
+                        raise ValueError("Tool VR indisponível no modo OFF.")
+                    exec_res = run_vr_tool(tool_name, arguments, service, **scope)
                 elif monitor is not None and tool_name in MONITOR_TOOL_NAMES:
-                    if output_chars >= 96000:
-                        raise ValueError("Limite de consultas deste turno atingido.")
                     exec_res = monitor.execute(
                         str(tool_name), arguments, monitor_session_id
                     )
-                    if output_chars + len(exec_res.text) > 96000:
-                        raise ValueError("Limite de resultados deste turno atingido; reduza limit.")
                 else:
                     raise ValueError(f"Tool desconhecida: {tool_name}")
 
                 load_scope(context_path)  # Reject work completed after cancellation.
-                if exec_res.parsed.get("state") != "budget_exhausted":
-                    output_chars += len(exec_res.text)
                 if (
                     context_path
                     and tool_name not in MONITOR_TOOL_NAMES
@@ -225,8 +224,18 @@ def main() -> None:
     parser.add_argument(
         "--monitor-session", default="", help="UUID da conversa vinculada ao VRMonitor"
     )
+    parser.add_argument(
+        "--disable-vr-tools",
+        action="store_true",
+        help="Não expõe vr_sources, vr_search e vr_read (modo OFF)",
+    )
     args = parser.parse_args()
-    run_mcp_server(args.root, args.context, args.monitor_session)
+    run_mcp_server(
+        args.root,
+        args.context,
+        args.monitor_session,
+        vr_tools_enabled=not args.disable_vr_tools,
+    )
 
 
 if __name__ == "__main__":

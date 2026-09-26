@@ -61,17 +61,8 @@ def mark_setup_completed(preferences: QSettings) -> None:
 
 def diagnostic_text(settings: MarySettings) -> str:
     """Generate diagnostic summary for the current settings matching existing studio behavior."""
-    try:
-        from .ocr import OcrManager
-
-        ocr_ready = OcrManager(settings.tesseract_dir).is_ready()
-    except Exception:
-        ocr_ready = False
     codex_ready = (settings.root / ".codex" / "config.toml").is_file()
-    return (
-        f"Projeto Codex: {'OK' if codex_ready else 'não preparado'}\n"
-        f"Tesseract por+eng: {'OK' if ocr_ready else 'não instalado'}"
-    )
+    return f"Projeto Codex: {'OK' if codex_ready else 'não preparado'}"
 
 
 def get_settings_values(settings: MarySettings) -> dict[str, Any]:

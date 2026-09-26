@@ -112,7 +112,8 @@ Item {
         { title: "Terminal", kind: "terminal", page: 2, description: "Executar comandos neste projeto." },
         { title: "Arquivos", kind: "files", page: 3, description: "Navegar pelos arquivos do projeto." },
         { title: "Contexto", kind: "context", page: 4, description: "Consultar arquivos e contexto local." },
-        { title: "Agentes", kind: "agents", page: 5, description: "Acompanhar subagentes e saídas." }
+        { title: "Agentes", kind: "agents", page: 5, description: "Acompanhar subagentes e saídas." },
+        { title: "Código", kind: "code", page: 6, description: "Inspecionar código Java descompilado da release." }
     ]
     property var approvalPayload: ({})
     property var composerSuggestions: []
@@ -123,6 +124,8 @@ Item {
     property string surfaceFilePreview: ""
     property int surfaceFileLine: 0
     property int surfaceFileColumn: 0
+    property var decompiledPreview: ({})
+    property bool decompiledCodeCleanMode: true
     property var contextItems: []
     property int selectedAgentIndex: -1
     property string pendingBrowserAddress: ""
@@ -130,7 +133,7 @@ Item {
     property bool composerDropActive: false
     property real clockNow: Date.now() / 1000
     property var expertProfiles: [
-        { key: "senior", label: "Sênior", icon: "expertSenior" },
+        { key: "adaptive", label: "Adaptativa", icon: "expertSenior" },
         { key: "training", label: "Treinamento", icon: "expertTraining" },
         { key: "support", label: "Suporte", icon: "expertSupport" },
         { key: "implementation", label: "Implantação", icon: "expertImplementation" }
@@ -147,7 +150,8 @@ Item {
     property string projectSettingsIconEmoji: ""
     property string projectSettingsIconColor: ""
     property string projectSettingsIconText: ""
-    property real conversationSidebarWidth: conversationSidebarVisible ? (width < 760 ? 220 : 260) : 0
+    property real conversationSidebarWidth: conversationSidebarVisible
+        ? (width < 760 ? Theme.navigationWidthMinimum : Theme.navigationWidth) : 0
     readonly property real sidebarBorderX: conversationSidebarVisible && conversationSidebar.visible
         ? (conversationSidebar.width + 3)
         : 0
@@ -228,6 +232,9 @@ Item {
         function onFilePreviewRequested(path, line, column) {
             root.openFileSurface(path, line, column)
         }
+        function onDecompiledSourcePreviewRequested(payload) {
+            root.openCodeSurface(payload)
+        }
         function onProjectsChanged() {
             root.syncOpenProjectSettings()
         }
@@ -274,22 +281,35 @@ Item {
             implicitWidth: Theme.scaledGeometry(7)
             color: "transparent"
 
-            // Left slice matches sidebar background
+            // The same delegate serves the sidebar|chat and chat|surface
+            // boundaries. Only the surface edge has the panel on the right,
+            // so its slices mirror the default sidebar-left pair.
+            readonly property bool leftOfSurfacePanel: surfaceDock.visible
+                && surfaceDock.width > 0.5
+                && Math.abs((x + width) - surfaceDock.x) < 2
+
+            // Left slice matches the adjacent background
             Rectangle {
+                objectName: "chatSplitLeftSlice"
                 anchors.left: parent.left
                 anchors.right: chatCenterLine.left
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
-                color: Theme.palette.chatSidebar
+                color: chatSplitHandle.leftOfSurfacePanel
+                    ? Theme.palette.chatBackground
+                    : Theme.palette.chatSidebar
             }
 
-            // Right slice matches content background
+            // Right slice matches the adjacent background
             Rectangle {
+                objectName: "chatSplitRightSlice"
                 anchors.left: chatCenterLine.right
                 anchors.right: parent.right
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
-                color: Theme.palette.chatBackground
+                color: chatSplitHandle.leftOfSurfacePanel
+                    ? Theme.palette.chatSidebar
+                    : Theme.palette.chatBackground
             }
 
             // Crisp 1px hairline divider
@@ -362,7 +382,7 @@ Item {
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: Theme.scaledGeometry(10)
+                anchors.margins: Theme.sidebarContentInset
                 spacing: Theme.scaledGeometry(6)
 
                 Item {
@@ -386,7 +406,7 @@ Item {
                                 id: conversationSearch
                                 objectName: "conversationSearch"
                                 anchors.fill: parent
-                                leftPadding: Theme.scaledGeometry(30)
+                                leftPadding: Theme.scaledGeometry(32)
                                 rightPadding: Theme.scaledGeometry(6)
                                 placeholderText: "Pesquisar"
                                 Accessible.name: "Pesquisar conversas"
@@ -420,7 +440,7 @@ Item {
                             }
                             VrLineIcon {
                                 anchors.left: parent.left
-                                anchors.leftMargin: Theme.scaledGeometry(7)
+                                anchors.leftMargin: Theme.sidebarContentInset
                                 anchors.verticalCenter: parent.verticalCenter
                                 width: Theme.iconSmall
                                 height: Theme.iconSmall
@@ -435,7 +455,7 @@ Item {
                             id: folderActionsCapsule
                             Layout.preferredHeight: Theme.scaledGeometry(32)
                             Layout.alignment: Qt.AlignVCenter
-                            implicitWidth: folderActionsRow.implicitWidth + 4
+                            implicitWidth: folderActionsRow.implicitWidth + 2
                             radius: Theme.scaledGeometry(8)
                             color: "transparent"
                             border.width: 0
@@ -443,7 +463,7 @@ Item {
                             RowLayout {
                                 id: folderActionsRow
                                 anchors.centerIn: parent
-                                spacing: Theme.scaledGeometry(4)
+                                spacing: Theme.scaledGeometry(2)
 
                                 VrProjectSelector {
                                     id: projectSelector
@@ -468,9 +488,9 @@ Item {
                                 VrIconButton {
                                     id: addProjectButton
                                     objectName: "addProjectButton"
-                                    implicitWidth: Theme.scaledGeometry(32)
-                                    implicitHeight: Theme.scaledGeometry(32)
-                                    iconSize: Theme.iconSmall
+                                    implicitWidth: Theme.iconButtonCompact
+                                    implicitHeight: Theme.iconButtonCompact
+                                    iconSize: Theme.iconCompact
                                     iconKind: "folderPlus"
                                     focusPolicy: Qt.NoFocus
                                     foreground: hovered ? Theme.palette.text : Theme.palette.mutedText
@@ -485,9 +505,9 @@ Item {
                                 VrIconButton {
                                     id: newChatButton
                                     objectName: "newChatButton"
-                                    implicitWidth: Theme.scaledGeometry(32)
-                                    implicitHeight: Theme.scaledGeometry(32)
-                                    iconSize: Theme.iconSmall
+                                    implicitWidth: Theme.iconButtonCompact
+                                    implicitHeight: Theme.iconButtonCompact
+                                    iconSize: Theme.iconCompact
                                     iconKind: "newChat"
                                     focusPolicy: Qt.NoFocus
                                     foreground: hovered ? Theme.palette.text : Theme.palette.mutedText
@@ -554,8 +574,8 @@ Item {
                             anchors.right: parent.right
                             anchors.top: parent.top
                             anchors.bottom: parent.bottom
-                            anchors.leftMargin: Theme.scaledGeometry(9)
-                            anchors.rightMargin: Theme.scaledGeometry(9)
+                            anchors.leftMargin: Theme.sidebarRowInset
+                            anchors.rightMargin: Theme.sidebarRowInset
                             anchors.topMargin: Theme.scaledGeometry(6)
                             anchors.bottomMargin: Theme.scaledGeometry(6)
                             spacing: 2
@@ -617,8 +637,8 @@ Item {
                                 }
                                 VrLineIcon {
                                     visible: conversationItem.pinned && !conversationItem.running
-                                    Layout.preferredWidth: Theme.iconSmall
-                                    Layout.preferredHeight: Theme.iconSmall
+                                    Layout.preferredWidth: Theme.iconMicro
+                                    Layout.preferredHeight: Theme.iconMicro
                                     kind: "pin"
                                     foreground: Theme.palette.brandOrange
                                 }
@@ -818,6 +838,9 @@ Item {
                 property bool followTail: true
                 property bool holdingReader: false
                 property real readerY: 0
+                // Suspends end re-pinning while a row disclosure settles so the
+                // toggled row never slides out from under the cursor.
+                property bool disclosureToggleSettling: false
                 // Active scroll anchor for collapsible message transitions
                 // (Mostrar mais, Mostrar menos, streaming termination).
                 // 0: none, 1: message completely above, 2: viewport inside message
@@ -832,7 +855,21 @@ Item {
                     holdingReader = false
                     readerTimer.stop()
                     tailTimer.stop()
+                    disclosureSettleTimer.stop()
+                    disclosureToggleSettling = false
                     clearAnchor()
+                }
+                function beginDisclosureToggle() {
+                    // Hold contentY while the row layout settles instead of
+                    // re-pinning the end (T3 Code suspends end maintenance for
+                    // the disclosure the same way).
+                    disclosureToggleSettling = true
+                    followTail = false
+                    tailTimer.stop()
+                    readerTimer.stop()
+                    holdingReader = false
+                    clearAnchor()
+                    disclosureSettleTimer.restart()
                 }
                 function clearAnchor() {
                     anchorMode = 0
@@ -935,6 +972,17 @@ Item {
                     interval: 120
                     onTriggered: { messageList.restoreReader(); messageList.holdingReader = false }
                 }
+                Timer {
+                    id: disclosureSettleTimer
+                    interval: Theme.fastDuration + 60
+                    onTriggered: {
+                        messageList.disclosureToggleSettling = false
+                        if (messageList.atYEnd) {
+                            messageList.followTail = true
+                            messageList.positionViewAtEnd()
+                        }
+                    }
+                }
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: chatHeader.bottom
@@ -982,6 +1030,7 @@ Item {
                                 id: activityComponent
                                 VrChatActivity {
                                     property bool cardExpanded: false
+                                    scopeKey: messageItem.messageKey || "live"
                                     items: messageItem.messageKey ? messageItem.activityData : root.chatBridge.traceItems
                                     reasoningText: messageItem.messageKey ? "" : root.chatBridge.reasoningText
                                     statusText: messageItem.messageKey ? (messageItem.isStreaming ? "Trabalhando…" : "Concluído") : root.chatBridge.statusText
@@ -990,6 +1039,7 @@ Item {
                                     running: messageItem.messageKey ? messageItem.isStreaming : root.chatBridge.turnRunning
                                     expanded: cardExpanded || (running && root.activityExpanded)
                                     onToggleRequested: cardExpanded = !cardExpanded
+                                    onDisclosureToggled: messageList.beginDisclosureToggle()
                                 }
                             }
                             Component {
@@ -1019,7 +1069,6 @@ Item {
                                     markdown: messageItem.displayContent
                                     messageKey: messageItem.messageKey
                                     streaming: messageItem.isStreaming || (root.chatBridge.turnRunning && messageItem.index === messageList.count - 1 && !messageItem.messageKey)
-                                    onCopyRequested: root.chatBridge.copyMessage(messageItem.index)
                                     onAnchorRequested: messageList.anchorMessage(messageItem)
                                     onTransitionFinished: messageList.finishAnchor(messageItem)
                                     onToggled: (expanded, heightDelta) => {
@@ -1051,6 +1100,10 @@ Item {
                     }
                 }
                 onContentHeightChanged: {
+                    // Fixed settle window: a streamed growth must not extend it
+                    // and keep end maintenance suspended indefinitely.
+                    if (disclosureToggleSettling)
+                        return
                     if (followTail && !moving) tailTimer.restart()
                     else if (hasAnchor) applyAnchorAdjustment()
                     else if (holdingReader) Qt.callLater(restoreReader)
@@ -1135,8 +1188,11 @@ Item {
                     width: Math.min(implicitWidth, parent.width)
                     spacing: Theme.scaledGeometry(6)
                     Text {
+                        id: landingHeadingText
+                        objectName: "landingHeadingText"
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
+                        Layout.alignment: Qt.AlignTop
                         text: landingProjectButton.projectLabel.length
                             ? "Como posso ajudar no projeto" : "Como posso ajudar no"
                         color: Theme.palette.text
@@ -1152,6 +1208,7 @@ Item {
                         objectName: "landingProjectButton"
                         Layout.maximumWidth: landing.width * 0.55
                         Layout.minimumWidth: 0
+                        Layout.alignment: Qt.AlignTop
                         Layout.preferredWidth: implicitWidth
                         implicitWidth: contentItem.implicitWidth
                         implicitHeight: contentItem.implicitHeight
@@ -1177,6 +1234,7 @@ Item {
                             implicitHeight: linkText.implicitHeight
                             Text {
                                 id: linkText
+                                objectName: "landingProjectLink"
                                 text: landingProjectButton.projectLabel.length
                                     ? "<font color=\"" + Theme.palette.mutedText.toString() + "\">"
                                         + landingProjectButton.projectLabel.replace(/&/g, "&amp;")
@@ -1189,6 +1247,7 @@ Item {
                                 font.pixelSize: landing.headingSize
                                 font.weight: Font.Normal
                                 font.letterSpacing: Theme.tracking(landing.headingSize, Theme.trackingTight)
+                                lineHeight: Theme.headingLineHeight
                                 horizontalAlignment: Text.AlignLeft
                                 wrapMode: Text.WordWrap
                             }
@@ -1306,7 +1365,7 @@ Item {
                 anchors.bottomMargin: Theme.scaledGeometry(10)
                 z: 20
                 research: root.chatBridge.resumableResearch || ({})
-                onResumeRequested: function(grantBudget) { root.chatBridge.resumeResearch(grantBudget) }
+                onResumeRequested: root.chatBridge.resumeResearch()
             }
 
             VrTaskBar {
@@ -1401,6 +1460,7 @@ Item {
                 objectName: "expertProfileStrip"
                 z: 20
                 visible: root.expertReveal > 0.001
+                enabled: root.expertReveal > 0.001
                 anchors.horizontalCenter: composerCard.horizontalCenter
                 y: composerCard.y + composerCard.height
                     + 8 - (1.0 - root.expertReveal) * 8
@@ -2295,6 +2355,268 @@ Item {
                             }
                         }
                     }
+                    Item {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: Theme.scaledGeometry(16)
+                            visible: String((root.decompiledPreview || {}).state || "") !== "ready"
+                            spacing: Theme.scaledGeometry(12)
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                visible: String((root.decompiledPreview || {}).state || "") === "loading"
+                                spacing: Theme.scaledGeometry(8)
+
+                                BusyIndicator {
+                                    running: visible
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    objectName: "decompiledCodeLoadingReference"
+                                    text: "Resolvendo " + String((root.decompiledPreview || {}).reference || "referência") + "…"
+                                    color: Theme.palette.mutedText
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSize(13)
+                                    elide: Text.ElideMiddle
+                                }
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                objectName: "decompiledCodeStatusMessage"
+                                visible: {
+                                    var currentState = String((root.decompiledPreview || {}).state || "")
+                                    return currentState === "not_found" || currentState === "error"
+                                }
+                                text: {
+                                    var payload = root.decompiledPreview || {}
+                                    var currentState = String(payload.state || "")
+                                    if (currentState === "error")
+                                        return String(payload.message || "Erro ao carregar código descompilado.")
+                                    return String(payload.message || "Classe ou método não encontrado na release ativa.")
+                                }
+                                color: String((root.decompiledPreview || {}).state || "") === "error"
+                                    ? Theme.palette.danger : Theme.palette.text
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSize(13)
+                                wrapMode: Text.WordWrap
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                visible: String((root.decompiledPreview || {}).state || "") === "ambiguous"
+                                spacing: Theme.scaledGeometry(8)
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    objectName: "decompiledCodeAmbiguousMessage"
+                                    text: String((root.decompiledPreview || {}).message || "Múltiplas classes encontradas.")
+                                    color: Theme.palette.text
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSize(13)
+                                    font.weight: Font.DemiBold
+                                    wrapMode: Text.WordWrap
+                                }
+
+                                ListView {
+                                    id: decompiledCodeCandidateList
+                                    objectName: "decompiledCodeCandidateList"
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    clip: true
+                                    spacing: Theme.scaledGeometry(6)
+                                    model: (((root.decompiledPreview || {}).candidates) || []).slice(0, 20)
+                                    ScrollBar.vertical: VrScrollBar { }
+
+                                    delegate: Rectangle {
+                                        objectName: "decompiledCodeCandidate"
+                                        required property var modelData
+                                        width: decompiledCodeCandidateList.width
+                                        height: Theme.scaledGeometry(52)
+                                        color: Theme.palette.chatControl
+                                        border.width: 1
+                                        border.color: Theme.palette.chatBorder
+
+                                        ColumnLayout {
+                                            anchors.fill: parent
+                                            anchors.margins: Theme.scaledGeometry(8)
+                                            spacing: 2
+
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: String(modelData.qualified_name || "")
+                                                color: Theme.palette.text
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontSize(12)
+                                                font.weight: Font.DemiBold
+                                                elide: Text.ElideMiddle
+                                            }
+
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: String(modelData.jar_relative_path || "")
+                                                color: Theme.palette.mutedText
+                                                font.family: Theme.fontFamily
+                                                font.pixelSize: Theme.fontSizeMicro
+                                                elide: Text.ElideMiddle
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            visible: String((root.decompiledPreview || {}).state || "") === "ready"
+                            spacing: Theme.scaledGeometry(8)
+
+                            Text {
+                                Layout.fillWidth: true
+                                objectName: "decompiledCodeTitle"
+                                text: String((root.decompiledPreview || {}).title || "")
+                                color: Theme.palette.headingText
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSize(16)
+                                font.weight: Font.DemiBold
+                                elide: Text.ElideRight
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                objectName: "decompiledCodeQualifiedName"
+                                text: String((root.decompiledPreview || {}).qualified_name || "")
+                                color: Theme.palette.mutedText
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSize(12)
+                                elide: Text.ElideMiddle
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                objectName: "decompiledCodeJarPath"
+                                text: String((root.decompiledPreview || {}).jar_relative_path || "")
+                                color: Theme.palette.mutedText
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeMicro
+                                elide: Text.ElideMiddle
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: Theme.scaledGeometry(10)
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    objectName: "decompiledCodeTargetLine"
+                                    visible: {
+                                        var payload = root.decompiledPreview || {}
+                                        var line = root.decompiledCodeCleanMode
+                                            ? Number(payload.clean_target_line || 0)
+                                            : Number(payload.raw_target_line || 0)
+                                        return String(payload.target_symbol || "").length > 0
+                                            && Number(payload.overload_count || 0) === 1
+                                            && line > 0
+                                    }
+                                    text: {
+                                        var payload = root.decompiledPreview || {}
+                                        var line = root.decompiledCodeCleanMode
+                                            ? Number(payload.clean_target_line || 0)
+                                            : Number(payload.raw_target_line || 0)
+                                        return String(payload.target_symbol || "") + " · L" + line
+                                    }
+                                    color: Theme.palette.brandOrange
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSize(12)
+                                    font.weight: Font.DemiBold
+                                    elide: Text.ElideRight
+                                }
+
+                                Text {
+                                    objectName: "decompiledCodeOverloads"
+                                    visible: Number((root.decompiledPreview || {}).overload_count || 0) > 1
+                                    text: String((root.decompiledPreview || {}).target_symbol || "")
+                                        + " · " + Number((root.decompiledPreview || {}).overload_count || 0)
+                                        + " sobrecargas"
+                                    color: Theme.palette.warning
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSize(12)
+                                }
+
+                                Text {
+                                    objectName: "decompiledCodeTruncated"
+                                    visible: Boolean((root.decompiledPreview || {}).truncated)
+                                    text: "Truncado"
+                                    color: Theme.palette.warning
+                                    font.family: Theme.fontFamily
+                                    font.pixelSize: Theme.fontSize(12)
+                                    font.weight: Font.DemiBold
+                                }
+
+                                Item {
+                                    Layout.fillWidth: true
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: Theme.scaledGeometry(10)
+                                Layout.rightMargin: Theme.scaledGeometry(10)
+                                spacing: Theme.scaledGeometry(6)
+
+                                VrButton {
+                                    objectName: "decompiledCodeCleanModeButton"
+                                    Layout.fillWidth: true
+                                    text: "Limpo"
+                                    enabled: Boolean((root.decompiledPreview || {}).clean_available)
+                                    variant: root.decompiledCodeCleanMode ? "primary" : "secondary"
+                                    onClicked: {
+                                        root.decompiledCodeCleanMode = true
+                                        Qt.callLater(function() { decompiledSourceViewer.revealLine() })
+                                    }
+                                }
+
+                                VrButton {
+                                    objectName: "decompiledCodeRawModeButton"
+                                    Layout.fillWidth: true
+                                    text: "Descompilado"
+                                    variant: root.decompiledCodeCleanMode ? "secondary" : "primary"
+                                    onClicked: {
+                                        root.decompiledCodeCleanMode = false
+                                        Qt.callLater(function() { decompiledSourceViewer.revealLine() })
+                                    }
+                                }
+
+                                VrButton {
+                                    objectName: "copyDecompiledCodeButton"
+                                    Layout.fillWidth: true
+                                    text: "Copiar"
+                                    enabled: decompiledSourceViewer.code.length > 0
+                                    onClicked: root.studioBridge.copyText(decompiledSourceViewer.code)
+                                }
+                            }
+
+                            VrDecompiledSourceView {
+                                id: decompiledSourceViewer
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                Layout.topMargin: Theme.scaledGeometry(2)
+                                frontendBridge: root.frontendBridge
+                                code: root.decompiledCodeCleanMode
+                                    ? String((root.decompiledPreview || {}).clean_body || "")
+                                    : String((root.decompiledPreview || {}).body || "")
+                                targetLine: root.decompiledCodeCleanMode
+                                    ? Math.max(0, Number((root.decompiledPreview || {}).clean_target_line || 0))
+                                    : Math.max(0, Number((root.decompiledPreview || {}).raw_target_line || 0))
+                                onCodeChanged: Qt.callLater(function() { decompiledSourceViewer.revealLine() })
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -2331,54 +2653,107 @@ Item {
         id: composerAssistPopup
         parent: composerCard
         x: 0
-        y: -height - 8
+        y: -height - Theme.scaledGeometry(8)
         width: composerCard.width
-        height: Math.min(250, assistList.contentHeight + 12)
-        padding: Theme.scaledGeometry(6)
+        height: Math.min(Theme.scaledGeometry(270), assistList.contentHeight + Theme.scaledGeometry(10))
+        padding: Theme.scaledGeometry(5)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        background: Rectangle { color: Theme.palette.chatComposer; border.width: 1; border.color: Theme.palette.chatBorder; radius: Theme.scaledGeometry(12) }
+        background: Rectangle {
+            color: Theme.palette.chatComposer
+            border.width: 1
+            border.color: Theme.palette.chatBorder
+            radius: Theme.scaledGeometry(12)
+        }
         contentItem: ListView {
             id: assistList
             clip: true
-            spacing: 2
+            spacing: Theme.scaledGeometry(2)
             model: root.composerSuggestions
             currentIndex: root.composerAssistIndex
             highlightMoveDuration: 0
+            boundsBehavior: Flickable.StopAtBounds
             delegate: Rectangle {
                 id: assistItem
                 required property int index
                 required property var modelData
                 width: assistList.width
-                height: Theme.scaledGeometry(44)
-                radius: Theme.scaledGeometry(7)
-                color: (assistItem.index === root.composerAssistIndex || assistHover.hovered) ? Theme.palette.chatControl : "transparent"
+                height: Theme.scaledGeometry(34)
+                radius: Theme.scaledGeometry(6)
+                color: (assistItem.index === root.composerAssistIndex)
+                    ? Theme.palette.chatControl
+                    : (assistHover.hovered ? Qt.alpha(Theme.palette.chatControl, 0.5) : "transparent")
+
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: Theme.scaledGeometry(9)
-                    anchors.rightMargin: Theme.scaledGeometry(9)
-                    Text {
-                        Layout.preferredWidth: Theme.scaledGeometry(140)
-                        text: assistItem.modelData.label
-                        color: assistItem.modelData.action === "skill" ? Theme.palette.brandOrange : Theme.palette.text
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
-                        font.weight: Font.DemiBold
-                        elide: Text.ElideRight
+                    anchors.leftMargin: Theme.scaledGeometry(10)
+                    anchors.rightMargin: Theme.scaledGeometry(10)
+                    spacing: Theme.scaledGeometry(10)
+
+                    RowLayout {
+                        spacing: 0
+                        Text {
+                            visible: !!assistItem.modelData.prefix
+                            text: assistItem.modelData.prefix || ""
+                            color: Theme.palette.mutedText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSize(13)
+                            font.weight: Font.Normal
+                            renderType: Theme.textRenderType
+                        }
+                        Text {
+                            text: assistItem.modelData.mainLabel || assistItem.modelData.label
+                            color: Theme.palette.text
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSize(13)
+                            font.weight: Font.DemiBold
+                            renderType: Theme.textRenderType
+                        }
                     }
+
                     Text {
+                        id: descText
                         Layout.fillWidth: true
+                        Layout.minimumWidth: 0
                         text: assistItem.modelData.description || ""
                         color: Theme.palette.mutedText
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSizeCaption
+                        font.weight: Font.Normal
                         elide: Text.ElideRight
+                        renderType: Theme.textRenderType
+                    }
+
+                    RowLayout {
+                        visible: !!assistItem.modelData.badge
+                        spacing: Theme.scaledGeometry(5)
+                        Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+
+                        VrLineIcon {
+                            kind: "cube"
+                            foreground: Theme.palette.mutedText
+                            strokeWidth: 1.8
+                            implicitWidth: Theme.scaledGeometry(14)
+                            implicitHeight: Theme.scaledGeometry(14)
+                        }
+
+                        Text {
+                            text: assistItem.modelData.badge || ""
+                            color: Theme.palette.text
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSize(12)
+                            font.weight: Font.DemiBold
+                            renderType: Theme.textRenderType
+                        }
                     }
                 }
+
                 HoverHandler {
                     id: assistHover
                     onHoveredChanged: if (hovered) root.composerAssistIndex = assistItem.index
                 }
-                TapHandler { onTapped: root.chooseComposerSuggestion(assistItem.modelData) }
+                TapHandler {
+                    onTapped: root.chooseComposerSuggestion(assistItem.modelData)
+                }
             }
         }
     }
@@ -2494,7 +2869,7 @@ Item {
                     height: Theme.scaledGeometry(54)
                     radius: Theme.scaledGeometry(7)
                     color: newChatProjectList.currentIndex === index
-                        ? (Theme.palette.appearance === "light" ? Theme.palette.selection : "#24384c")
+                        ? Theme.palette.selection
                         : (newProjectHover.hovered ? Theme.palette.chatControl : "transparent")
 
                     RowLayout {
@@ -3024,6 +3399,14 @@ Item {
         Qt.callLater(root.scrollFilePreviewToLine)
     }
 
+    function openCodeSurface(payload) {
+        var data = payload || ({})
+        root.decompiledPreview = data
+        if (String(data.state || "") === "loading")
+            root.decompiledCodeCleanMode = true
+        root.openSurface(6)
+    }
+
     function revealFileFolder(path) {
         var target = String(path || "").replace(/\\/g, "/").toLowerCase()
         var next = {}
@@ -3459,28 +3842,43 @@ Item {
         var value = composerInput.text
         var trimmed = value.trim()
         var commands = [
-            {label:"/model",description:"Escolher modelo e provedor",action:"model"},
-            ...(root.chatBridge.supportsReasoning ? [{label:"/effort",description:"Definir esforço de raciocínio",action:"effort"}] : []),
-            {label:"/permissions",description:"Definir perfil de aprovação",action:"permissions"},
-            {label:"/skills",description:"Gerenciar skills disponíveis",action:"skills"},
-            {label:"/usage-limits",description:"Ver limites de uso e quotas do provedor",action:"usage-limits"},
-            {label:"/tools",description:"Ver tools e MCP",action:"tools"},
-            {label:"/vr",description:"Alternar Off / VR / VR Ultra",action:"vr"}
+            {label:"/model",mainLabel:"/model",description:"Switch response model for this thread",action:"model"},
+            {label:"/init",mainLabel:"/init",description:"guided AGENTS.md setup",action:"prompt"},
+            {label:"/review",mainLabel:"/review",description:"review changes [commit|branch|pr], defaults to uncommitted",action:"prompt"},
+            {label:"/usage-limits",mainLabel:"/usage-limits",description:"Show this provider's usage limits",action:"usage-limits"},
+            ...(root.chatBridge.supportsReasoning ? [{label:"/effort",mainLabel:"/effort",description:"Definir esforço de raciocínio",action:"effort"}] : []),
+            {label:"/permissions",mainLabel:"/permissions",description:"Definir perfil de aprovação",action:"permissions"},
+            {label:"/skills",mainLabel:"/skills",description:"Gerenciar skills disponíveis",action:"skills"},
+            {label:"/tools",mainLabel:"/tools",description:"Ver tools e MCP",action:"tools"},
+            {label:"/vr",mainLabel:"/vr",description:"Alternar Off / VR / VR Ultra",action:"vr"}
         ]
         if (trimmed.length && trimmed[0] === "/" && trimmed.indexOf(" ") < 0) {
             var needle = trimmed.substring(1).toLowerCase()
+            var skillQuery = needle
+            if (skillQuery.startsWith("skill:")) {
+                skillQuery = skillQuery.substring(6).trim()
+            } else if (skillQuery.startsWith("skill")) {
+                skillQuery = skillQuery.substring(5).trim()
+            }
             var matches = commands.filter(function(item) {
                 return item.label.substring(1).toLowerCase().indexOf(needle) >= 0
             })
             if (root.chatBridge.showSkillsInSlashMenu) {
-                var skills = root.chatBridge.skillSuggestions(needle)
+                var skills = root.chatBridge.skillSuggestions(skillQuery)
                 for (var i = 0; i < skills.length; i++) {
                     var s = skills[i]
+                    var skillDisplayName = s.displayName || s.name
+                    var badgeLabel = (s.source === "provider_native" || s.scope === "provider")
+                        ? "Provider"
+                        : (s.scope ? (s.scope.charAt(0).toUpperCase() + s.scope.slice(1)) : "Provider")
                     matches.push({
-                        label: "/" + s.name,
+                        label: "/skill:" + skillDisplayName,
+                        prefix: "/skill:",
+                        mainLabel: skillDisplayName,
                         description: s.shortDescription || s.description || "Skill",
                         action: "skill",
                         skill: s,
+                        badge: badgeLabel,
                         start: 0
                     })
                 }
@@ -3500,11 +3898,18 @@ Item {
             if (querySkill.indexOf(" ") < 0 && querySkill.indexOf("\n") < 0) {
                 var skillsFound = root.chatBridge.skillSuggestions(querySkill)
                 composerSuggestions = skillsFound.map(function(item) {
+                    var skillDisplayName = item.displayName || item.name
+                    var badgeLabel = (item.source === "provider_native" || item.scope === "provider")
+                        ? "Provider"
+                        : (item.scope ? (item.scope.charAt(0).toUpperCase() + item.scope.slice(1)) : "Provider")
                     return {
-                        label: "$" + item.name,
+                        label: "$" + skillDisplayName,
+                        prefix: "$",
+                        mainLabel: skillDisplayName,
                         description: item.shortDescription || item.description || "Skill",
                         action: "skill",
                         skill: item,
+                        badge: badgeLabel,
                         start: dollar
                     }
                 })
@@ -3523,7 +3928,14 @@ Item {
             if (query.indexOf(" ") < 0 && query.indexOf("\n") < 0) {
                 var files = root.chatBridge.fileSuggestions(query)
                 composerSuggestions = files.map(function(item) {
-                    return {label:item.label,description:"Arquivo do projeto",action:"reference",path:item.path,start:at}
+                    return {
+                        label: item.label,
+                        mainLabel: item.label,
+                        description: "Arquivo do projeto",
+                        action: "reference",
+                        path: item.path,
+                        start: at
+                    }
                 })
                 if (composerSuggestions.length) {
                     root.composerAssistIndex = 0
@@ -3553,11 +3965,31 @@ Item {
             composerInput.cursorPosition = composerInput.length
             composerInput.forceActiveFocus()
         }
-        else if (item.action === "model") modelSelector.openPicker()
-        else if (item.action === "effort" && root.chatBridge.supportsReasoning) effortSelector.openPicker()
-        else if (item.action === "permissions") approvalSelector.openPicker()
-        else if (item.action === "vr") root.chatBridge.cycleVrMode()
-        else if (item.action === "skills" || item.action === "tools") extensionsDialog.open()
+        else if (item.action === "model") {
+            composerInput.clear()
+            modelSelector.openPicker()
+        }
+        else if (item.action === "effort" && root.chatBridge.supportsReasoning) {
+            composerInput.clear()
+            effortSelector.openPicker()
+        }
+        else if (item.action === "permissions") {
+            composerInput.clear()
+            approvalSelector.openPicker()
+        }
+        else if (item.action === "vr") {
+            composerInput.clear()
+            root.chatBridge.cycleVrMode()
+        }
+        else if (item.action === "skills" || item.action === "tools") {
+            composerInput.clear()
+            extensionsDialog.open()
+        }
+        else if (item.action === "prompt") {
+            composerInput.text = item.label + " "
+            composerInput.cursorPosition = composerInput.length
+            composerInput.forceActiveFocus()
+        }
         else if (item.action === "reference") {
             var before = composerInput.text.substring(0, item.start)
             composerInput.text = before + "@\"" + item.path + "\" "
@@ -3586,18 +4018,20 @@ Item {
     }
 
     function expertProfileSelected(key) {
-        if (!root.chatBridge.seniorProfileEnabled) return false
-        if (key === "senior") return root.chatBridge.vrResponseMode === "auto"
+        if (root.chatBridge.vrMode === "off"
+                || !root.chatBridge.expertProfileEnabled) return false
+        if (key === "adaptive") return root.chatBridge.vrResponseMode === "auto"
         return root.chatBridge.vrResponseMode === key
     }
 
     function activateExpertProfile(key) {
+        if (root.chatBridge.vrMode === "off") return
         if (root.expertProfileSelected(key)) {
-            root.chatBridge.setSeniorProfileEnabled(false)
+            root.chatBridge.setExpertProfileEnabled(false)
             return
         }
-        root.chatBridge.setSeniorProfileEnabled(true)
-        root.chatBridge.setVrResponseMode(key === "senior" ? "auto" : key)
+        root.chatBridge.setExpertProfileEnabled(true)
+        root.chatBridge.setVrResponseMode(key === "adaptive" ? "auto" : key)
     }
 
     function navigateBrowser(value) {

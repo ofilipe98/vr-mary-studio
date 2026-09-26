@@ -251,7 +251,7 @@ Item {
                             text: control.activeApp ? (control.activeApp.name || control.activeApp.appId) : control.placeholderText
                             color: Theme.palette.headingText
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSize(14)
+                            font.pixelSize: Theme.fontSizeControl
                             font.weight: Font.DemiBold
                             elide: Text.ElideRight
                         }
@@ -317,7 +317,7 @@ Item {
                         }
                         color: Theme.palette.subtleText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCaption
                         elide: Text.ElideRight
                     }
                 }
@@ -417,7 +417,7 @@ Item {
                         placeholderTextColor: Theme.palette.mutedText
                         selectionColor: Theme.palette.selection
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(13)
+                        font.pixelSize: Theme.fontSizeControl
                         background: Item { }
                         selectByMouse: true
                         onTextChanged: {
@@ -512,7 +512,7 @@ Item {
                         text: control.selectedAppIds.length + " selecionado(s)"
                         color: Theme.palette.brandOrange
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCaption
                         font.weight: Font.DemiBold
                     }
 
@@ -607,7 +607,7 @@ Item {
                                             text: modelData.name || modelData.appId
                                             color: Theme.palette.headingText
                                             font.family: Theme.fontFamily
-                                            font.pixelSize: Theme.fontSize(13)
+                                            font.pixelSize: Theme.fontSizeControl
                                             font.weight: Font.DemiBold
                                             elide: Text.ElideRight
                                         }
@@ -694,7 +694,7 @@ Item {
                                     text: "Ver versões"
                                     color: verVersoesMouse.containsMouse ? Theme.palette.brandOrange : Theme.palette.mutedText
                                     font.family: Theme.fontFamily
-                                    font.pixelSize: Theme.fontSize(12)
+                                    font.pixelSize: Theme.fontSizeCaption
                                     font.weight: Font.Medium
                                 }
 
@@ -744,7 +744,7 @@ Item {
                         text: "Nenhum aplicativo encontrado para \"" + control.searchText + "\""
                         color: Theme.palette.mutedText
                         font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
+                        font.pixelSize: Theme.fontSizeCaption
                     }
                 }
             }

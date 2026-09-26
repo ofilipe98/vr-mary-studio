@@ -38,7 +38,7 @@ Item {
                 required property int index
                 required property string modelData
 
-                width: tabLabel.implicitWidth + 28
+                width: tabLabel.implicitWidth + Theme.spaceXl
                 height: Math.max(Theme.compactControlHeight, tabLabel.implicitHeight + Theme.spaceMd)
                 activeFocusOnTab: true
                 transformOrigin: Item.Center
@@ -82,7 +82,7 @@ Item {
                     color: root.currentIndex === tab.index
                         ? Theme.palette.text : Theme.palette.mutedText
                     font.family: Theme.fontFamily
-                    font.pixelSize: root.understated ? Theme.fontSize(13) : Theme.bodySize
+                    font.pixelSize: root.understated ? Theme.fontSizeControl : Theme.bodySize
                     font.weight: root.currentIndex === tab.index
                         ? Font.DemiBold : Font.Medium
                 }

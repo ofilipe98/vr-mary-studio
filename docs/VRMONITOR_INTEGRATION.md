@@ -21,4 +21,4 @@ As ferramentas disponíveis são `get_database_activity`, `get_connections`, `ge
 
 O cliente, a sessão e o token ficam fora dos argumentos do modelo. Respostas chegam com a classificação `UNTRUSTED_DATA`. O VRMonitor central aplica sessão/MFA, RBAC, client scope, capability, Object Policy, Query Guard, limites e auditoria. O perfil `supervised` pede aprovação para todas as operações; SQL read-only também pede aprovação fora de `full_access`.
 
-Cada turno permite até 24 chamadas e 96.000 caracteres acumulados. A resposta HTTP aceita somente JSON sem compressão e até 1 MiB; não há retry automático.
+Cada chamada respeita o limite individual da ferramenta e a paginação disponível. Não há quota cumulativa interna por chamadas, caracteres, tempo ou tokens no chat; cancelar o turno, substituí-lo ou receber um erro real do provider encerra a operação. A resposta HTTP aceita somente JSON sem compressão e até 1 MiB; não há retry automático.

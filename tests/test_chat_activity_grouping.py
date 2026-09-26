@@ -194,6 +194,44 @@ def test_reload_execution_timeline_groups_historical_tools(chat_bridge):
     assert [t["id"] for t in activity["activityData"]] == [f"hist_tool_{i}" for i in range(1, 8)]
 
 
+def test_terminal_only_tool_events_keep_live_activity_streaming_until_turn_ends(chat_bridge):
+    """OpenCode's CLI stream only reports completed tools.
+
+    The live row must keep the working state (and its shimmer) while the turn
+    is active instead of settling after every completed tool.
+    """
+    bridge, db = chat_bridge
+    cid = db.create_conversation("OpenCode live", "opencode", "test", bridge._settings.root)
+    eid = db.add_message(cid, "user", "test")
+    bridge.refresh()
+    bridge.selectConversationId(cid)
+
+    _publish(bridge, db, RuntimeEvent(cid, "turn_started", payload={"execution_id": eid}))
+    _publish(
+        bridge,
+        db,
+        RuntimeEvent(
+            cid,
+            "tool_event",
+            "grep",
+            {
+                "execution_id": eid,
+                "lifecycle": "tool_completed",
+                "item": {"id": "tool-1", "name": "grep", "type": "tool"},
+                "success": True,
+            },
+        ),
+    )
+
+    activities = [row for row in bridge.messages._items if row["role"] == "activity"]
+    assert len(activities) == 1
+    assert activities[0]["activityData"][0]["state"] == "completed"
+    assert activities[0]["isStreaming"] is True
+
+    _publish(bridge, db, RuntimeEvent(cid, "turn_completed", payload={"execution_id": eid}))
+    assert activities[0]["isStreaming"] is False
+
+
 def test_late_tool_completion_updates_original_group_live_and_after_reload(chat_bridge):
     bridge, db = chat_bridge
     cid = db.create_conversation("Interleaved", "codex", "test", bridge._settings.root)

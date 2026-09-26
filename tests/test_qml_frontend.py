@@ -25,7 +25,7 @@ from vrsoft_extractor.mary.db import MaryDatabase
 from vrsoft_extractor.mary.erp_releases import ErpReleaseCatalog
 from vrsoft_extractor.mary.frontend.app import MAIN_QML, create_engine
 from vrsoft_extractor.mary.frontend.bridge import FrontendBridge, NAVIGATION_ITEMS
-from vrsoft_extractor.mary.frontend.bridges import codeadmin
+from vrsoft_extractor.mary.frontend.bridges import codeadmin, knowledgetransfer
 from vrsoft_extractor.mary.frontend.chat import (
     CODE_PROCESSING_HARDWARE,
     DEFAULT_ERP_JAR_SOURCE_PATH,
@@ -34,6 +34,7 @@ from vrsoft_extractor.mary.frontend.chat import (
 )
 from vrsoft_extractor.mary.frontend.studio import StudioBridge
 from vrsoft_extractor.mary.models import RuntimeEvent
+from vrsoft_extractor.mary.settings_service import diagnostic_text
 
 pytestmark = pytest.mark.qml
 
@@ -120,6 +121,21 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(resolved.weight(), QFont.Weight.DemiBold)
         finally:
             self.application.setFont(previous_font)
+
+    def test_resume_contract_has_no_budget_argument(self):
+        self.assertNotIn("grant_budget", ChatBridge.resumeResearch.__code__.co_varnames)
+        self.assertNotIn("grant_budget", ChatBridge._send_message.__code__.co_varnames)
+        component = (
+            Path(__file__).resolve().parents[1]
+            / "vrsoft_extractor"
+            / "mary"
+            / "frontend"
+            / "qml"
+            / "components"
+            / "VrResearchResume.qml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("signal resumeRequested()", component)
+        self.assertNotIn("grantBudget", component)
 
     def test_brand_palette_keeps_existing_vr_identity(self):
         light = brand.brand_palette("light")
@@ -333,8 +349,6 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertTrue(reasoning_picker.property("visible"))
             chat_bridge.selectConversation(0)
             self.application.processEvents()
-            self.assertIsNotNone(window.findChild(QObject, "contextUsageButton"))
-            self.assertIsNotNone(window.findChild(QObject, "contextUsagePopup"))
             composer_input = window.findChild(QObject, "chatComposerInput")
             self.assertIsNotNone(composer_input)
             self.assertIsNotNone(window.findChild(QObject, "chatAttachButton"))
@@ -352,15 +366,53 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertTrue(add_project_popup.property("visible"))
             chat_page = window.findChild(QObject, "chatPage")
             self.assertIsNotNone(chat_page)
-            chat_bridge.setSeniorProfileEnabled(True)
+            profiles = chat_page.property("expertProfiles").toVariant()
+            self.assertEqual(profiles[0]["key"], "adaptive")
+            self.assertEqual(profiles[0]["label"], "Adaptativa")
+            self.assertEqual(profiles[0]["icon"], "expertSenior")
+            chat_bridge.setVrMode("vr")
+            self.application.processEvents()
+            for profile_key, response_mode in (
+                ("adaptive", "auto"),
+                ("training", "training"),
+                ("support", "support"),
+                ("implementation", "implementation"),
+            ):
+                chat_page.activateExpertProfile(profile_key)
+                self.assertTrue(chat_bridge.expertProfileEnabled)
+                self.assertEqual(chat_bridge.vrResponseMode, response_mode)
+                self.assertTrue(chat_page.expertProfileSelected(profile_key))
+                self.assertEqual(
+                    [
+                        item["key"]
+                        for item in profiles
+                        if chat_page.expertProfileSelected(item["key"])
+                    ],
+                    [profile_key],
+                )
+                chat_page.activateExpertProfile(profile_key)
+                self.assertFalse(chat_bridge.expertProfileEnabled)
+                self.assertEqual(chat_bridge.vrResponseMode, "auto")
+                self.assertFalse(
+                    any(chat_page.expertProfileSelected(item["key"]) for item in profiles)
+                )
+            chat_bridge.setExpertProfileEnabled(True)
             chat_bridge.setVrResponseMode("support")
-            chat_page.activateExpertProfile("support")
-            self.assertFalse(chat_bridge.seniorProfileEnabled)
-            self.assertEqual(chat_bridge.vrResponseMode, "auto")
-            chat_page.activateExpertProfile("training")
-            self.assertTrue(chat_bridge.seniorProfileEnabled)
-            self.assertEqual(chat_bridge.vrResponseMode, "training")
-            self.assertTrue(chat_page.expertProfileSelected("training"))
+            chat_bridge.setVrMode("off")
+            QTest.qWait(300)
+            self.application.processEvents()
+            expert_profile_strip = window.findChild(QObject, "expertProfileStrip")
+            self.assertIsNotNone(expert_profile_strip)
+            self.assertFalse(expert_profile_strip.property("visible"))
+            self.assertFalse(expert_profile_strip.property("enabled"))
+            self.assertTrue(chat_bridge.expertProfileEnabled)
+            self.assertFalse(chat_page.expertProfileSelected("support"))
+            chat_page.activateExpertProfile("adaptive")
+            self.assertTrue(chat_bridge.expertProfileEnabled)
+            self.assertEqual(chat_bridge.vrResponseMode, "support")
+            chat_bridge.setVrMode("vr")
+            self.assertTrue(chat_page.expertProfileSelected("support"))
+            chat_bridge.setExpertProfileEnabled(False)
             self.assertTrue(chat_page.activateProjectSource("local"))
             self.application.processEvents()
             self.assertEqual(chat_page.property("addProjectView"), "folder")
@@ -548,7 +600,7 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertIsNotNone(window.findChild(QObject, "vrUltraSettingsScroll"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraAgentPool"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraAgentModelPicker"))
-            self.assertIsNotNone(window.findChild(QObject, "vrUltraSeniorProfileCard"))
+            self.assertIsNotNone(window.findChild(QObject, "vrUltraExpertProfileCard"))
             self.assertIsNotNone(window.findChild(QObject, "vrUltraCodeAnalysisCard"))
 
             manage_apps_btn = window.findChild(QObject, "vrUltraManageAppsButton")
@@ -635,6 +687,94 @@ class QmlFrontendTest(unittest.TestCase):
             engine.deleteLater()
             self.application.processEvents()
 
+    def test_composer_pickers_flip_up_and_stay_inside_the_window(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            bridge = self._bridge(root, initial_page="Chat VR")
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            chat_bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            provider_labels = {"codex": "Codex", "opencode": "OpenCode"}
+            chat_bridge._model_items = [
+                {
+                    "provider": provider,
+                    "value": value,
+                    "displayName": name,
+                    "label": name,
+                    "key": f"{provider}:{value}",
+                    "providerLabel": provider_labels[provider],
+                }
+                for provider, value, name in (
+                    ("opencode", "deepseek-v4.1-flash", "DeepSeek V4.1 Flash"),
+                    ("codex", "gpt-6-astra", "GPT-6-Astra"),
+                )
+            ]
+            chat_bridge._favorite_model_keys = {
+                "opencode:deepseek-v4.1-flash",
+                "codex:gpt-6-astra",
+            }
+            with patch.object(chat_bridge, "refreshModels"):
+                engine = create_engine(bridge, chat_bridge)
+                self.application.processEvents()
+                window = engine.rootObjects()[0]
+                pickers = (
+                    ("chatModelPicker", "modelPickerPopup"),
+                    ("chatReasoningPicker", "reasoningPickerPopup"),
+                    ("chatPermissionPicker", "permissionPickerPopup"),
+                )
+                # T3 relies on the Base UI positioner: popups prefer opening
+                # below, flip up when they do not fit, and cap their height to
+                # the available side so they never leave the viewport.
+                for height, must_flip, must_stay_below in (
+                    (1000, set(), {name for _, name in pickers}),
+                    (700, {"modelPickerPopup", "reasoningPickerPopup"}, set()),
+                    (500, {name for _, name in pickers}, set()),
+                ):
+                    window.setWidth(700)
+                    window.setHeight(height)
+                    QTest.qWait(120)
+                    for picker_name, popup_name in pickers:
+                        picker = window.findChild(QObject, picker_name)
+                        picker.click()
+                        QTest.qWait(60)
+                        popup = window.findChild(QObject, popup_name)
+                        self.assertTrue(popup.property("visible"), popup_name)
+                        content = popup.property("contentItem")
+                        padding = float(popup.property("padding"))
+                        top = content.mapToScene(QPointF(0, 0)).y() - padding
+                        popup_height = float(popup.property("height"))
+                        bottom = top + popup_height
+                        self.assertGreaterEqual(top, -0.5, popup_name)
+                        self.assertLessEqual(bottom, height + 0.5, popup_name)
+                        self.assertLessEqual(
+                            popup_height,
+                            float(popup.property("naturalHeight")) + 0.5,
+                            popup_name,
+                        )
+                        if popup_name in must_flip:
+                            self.assertTrue(
+                                popup.property("openAbove"),
+                                f"{popup_name} should flip up in a {height}px window",
+                            )
+                        if popup_name in must_stay_below:
+                            self.assertFalse(
+                                popup.property("openAbove"),
+                                f"{popup_name} should stay below in a {height}px window",
+                            )
+                        picker.click()
+                        QTest.qWait(40)
+                window.close()
+                engine.deleteLater()
+                self.application.processEvents()
+
     def test_text_fields_expose_themed_edit_context_menu(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -714,11 +854,12 @@ class QmlFrontendTest(unittest.TestCase):
                 "```\n"
             )
             database.add_message(conversation_id, "assistant", markdown)
-            chat_bridge = ChatBridge(
-                settings,
-                database,
-                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            chat_preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
             )
+            chat_preferences.setValue("chat/current_project", "")
+            chat_preferences.sync()
+            chat_bridge = ChatBridge(settings, database, chat_preferences)
             engine = create_engine(bridge, chat_bridge)
             self.application.processEvents()
             try:
@@ -829,9 +970,7 @@ class QmlFrontendTest(unittest.TestCase):
                         fragment = iterator.fragment()
                         char_format = fragment.charFormat()
                         if char_format.fontFixedPitch():
-                            code_backgrounds.append(
-                                char_format.background().color().name()
-                            )
+                            code_backgrounds.append(char_format.background().style())
                         iterator += 1
                     block = block.next()
                 self.assertEqual(len(quote_blocks), 1)
@@ -840,7 +979,13 @@ class QmlFrontendTest(unittest.TestCase):
                 )
                 self.assertEqual(len(rule_blocks), 1)
                 self.assertEqual(rule_blocks[0].lineHeight(), 2.0)
-                self.assertIn("#26262b", code_backgrounds)
+                # Chips moved to VrInlineChipLayer: the document clears the flat
+                # fragment fill so the layer can round the corners and add the
+                # T3 hairline border.
+                self.assertEqual(code_backgrounds, [Qt.BrushStyle.NoBrush])
+                self.assertEqual(
+                    len(find_qml_items(content_item, "inlineChip", [])), 1
+                )
                 self.assertEqual(len(code_blocks), 0)
                 self.assertIn("def exemplo():", code_card.property("code"))
                 message_body.selectAll()
@@ -874,6 +1019,7 @@ class QmlFrontendTest(unittest.TestCase):
             preferences = QSettings(
                 str(root / "preferences.ini"), QSettings.IniFormat
             )
+            preferences.setValue("chat/current_project", "")
             bridge = ChatBridge(settings, database, preferences)
 
             self.assertEqual(bridge.conversationCount, 1)
@@ -1002,6 +1148,106 @@ class QmlFrontendTest(unittest.TestCase):
                 len(database.list_conversations(state="active")), before
             )
 
+    def test_default_project_is_vr_root_folder(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            settings.root.mkdir(parents=True)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            bridge = ChatBridge(settings, database, preferences)
+
+            self.assertEqual(bridge.projectItems[0]["label"], "Todos os projetos")
+            default_index = bridge.currentProjectIndex
+            self.assertGreater(default_index, 0)
+            self.assertEqual(
+                Path(bridge.projectItems[default_index]["path"]).resolve(),
+                settings.root.resolve(),
+            )
+            self.assertEqual(
+                bridge.selectedProject, bridge.projectItems[default_index]["label"]
+            )
+
+    def test_stored_project_scope_wins_over_vr_root_default(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            settings.root.mkdir(parents=True)
+            project = settings.root / "Cliente"
+            project.mkdir()
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            database.create_conversation(
+                "Conversa do projeto", "codex", "gpt-5.6", project
+            )
+
+            def bridge_for(stored: str, name: str) -> ChatBridge:
+                preferences = QSettings(str(root / name), QSettings.IniFormat)
+                preferences.setValue("chat/current_project", stored)
+                preferences.sync()
+                return ChatBridge(settings, database, preferences)
+
+            all_projects = bridge_for("", "prefs-all.ini")
+            self.assertEqual(all_projects.currentProjectIndex, 0)
+
+            saved = bridge_for(str(project), "prefs-saved.ini")
+            saved_index = next(
+                index
+                for index, item in enumerate(saved.projectItems)
+                if Path(item["path"]) == project
+            )
+            self.assertEqual(saved.currentProjectIndex, saved_index)
+
+            stale = bridge_for(str(settings.root / "Removido"), "prefs-stale.ini")
+            stale_index = next(
+                index
+                for index, item in enumerate(stale.projectItems)
+                if Path(item["path"]) == settings.root
+            )
+            self.assertEqual(stale.currentProjectIndex, stale_index)
+
+    def test_vr_root_project_stays_listed_and_selected_when_hidden(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            settings.root.mkdir(parents=True)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            preferences = QSettings(
+                str(root / "preferences.ini"), QSettings.IniFormat
+            )
+            preferences.setValue(
+                "chat/hidden_projects", json.dumps([str(settings.root)])
+            )
+            preferences.sync()
+            bridge = ChatBridge(settings, database, preferences)
+
+            root_index = next(
+                index
+                for index, item in enumerate(bridge.projectItems)
+                if Path(item["path"]) == settings.root
+            )
+            self.assertEqual(bridge.currentProjectIndex, root_index)
+            self.assertFalse(bridge.removeProject(root_index))
+            self.assertTrue(
+                any(
+                    Path(item["path"]) == settings.root
+                    for item in bridge.projectItems
+                )
+            )
+
     def test_chat_project_name_is_saved_and_restored(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1020,6 +1266,7 @@ class QmlFrontendTest(unittest.TestCase):
             preferences = QSettings(
                 str(root / "preferences.ini"), QSettings.IniFormat
             )
+            preferences.setValue("chat/current_project", "")
             bridge = ChatBridge(settings, database, preferences)
             project_index = next(
                 index
@@ -1161,6 +1408,7 @@ class QmlFrontendTest(unittest.TestCase):
             preferences = QSettings(
                 str(root / "preferences.ini"), QSettings.IniFormat
             )
+            preferences.setValue("chat/current_project", "")
             bridge = ChatBridge(settings, database, preferences)
 
             bridge.startNewChat()
@@ -1188,6 +1436,7 @@ class QmlFrontendTest(unittest.TestCase):
             preferences = QSettings(
                 str(root / "preferences.ini"), QSettings.IniFormat
             )
+            preferences.setValue("chat/current_project", "")
             bridge = ChatBridge(settings, database, preferences)
             conversation_id = bridge._orchestrator.new_conversation(
                 "codex", "sol", defer_provider_start=True, vr_mode="vr"
@@ -1688,6 +1937,20 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(manifest["updated_applications"], ["VRPdv"])
             bridge.close()
 
+    def test_applications_page_refreshes_metadata_on_completed(self):
+        qml = (
+            MAIN_QML.parent / "pages" / "ApplicationsSettingsPage.qml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "Component.onCompleted: chat.refreshCodeAnalysisReleasesMetadata()",
+            qml,
+        )
+        self.assertNotIn(
+            "Component.onCompleted: chat.refreshCodeAnalysisReleases()",
+            qml,
+        )
+
     def test_vr_ultra_release_import_explains_auto_detection_and_partial_packages(self):
         qml = (
             MAIN_QML.parent / "pages" / "ApplicationsSettingsPage.qml"
@@ -1740,6 +2003,62 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn('objectName: "vrUltraCodeProcessingProgressLabel"', apps_qml)
         self.assertIn("chat.codeProcessingCoveredJars", apps_qml)
         self.assertIn("enabled: chat.codeProcessingRunning", apps_qml)
+
+    def test_knowledge_transfer_tab_is_lazy_and_explicit(self):
+        qml_root = MAIN_QML.parent
+        settings_qml = (qml_root / "pages" / "SettingsPage.qml").read_text(
+            encoding="utf-8"
+        )
+        transfer_qml = (
+            qml_root / "pages" / "KnowledgeTransferSettingsPage.qml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('"Wiki e KB"', settings_qml)
+        self.assertIn('objectName: "knowledgeTransferSettingsLoader"', settings_qml)
+        self.assertIn("active: root.tabIndex === 8", settings_qml)
+        self.assertIn("root.knowledgeVisited", settings_qml)
+        self.assertIn("Math.min(8, Number(index))", settings_qml)
+        self.assertIn('objectName: "exportKnowledgePackageButton"', transfer_qml)
+        self.assertIn('objectName: "importKnowledgePackageButton"', transfer_qml)
+        self.assertIn('objectName: "knowledgeImportDialog"', transfer_qml)
+        self.assertIn('objectName: "knowledgeTransferProgressBar"', transfer_qml)
+        self.assertIn("chat.knowledgeTransferSources", transfer_qml)
+        self.assertIn("studio.refreshKnowledgeData()", transfer_qml)
+
+    def test_ocr_removed_from_settings_and_dashboard_ui(self):
+        qml_root = MAIN_QML.parent
+        settings_qml = (qml_root / "pages" / "SettingsPage.qml").read_text(
+            encoding="utf-8"
+        )
+        dashboard_qml = (qml_root / "pages" / "DashboardPreview.qml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn("install" + "OcrAction", settings_qml)
+        self.assertNotIn('runSync("' + "ocr" + '")', settings_qml)
+        self.assertNotIn("dashboardMetrics." + "ocr", dashboard_qml)
+        self.assertNotIn('label: "OCR"', dashboard_qml)
+        self.assertIn('label: "Documentos"', dashboard_qml)
+        self.assertIn('label: "Pendentes"', dashboard_qml)
+        self.assertIn('label: "Conversas"', dashboard_qml)
+        self.assertIn(
+            "columns: width < Theme.scaledGeometry(480) ? 2 : 3",
+            dashboard_qml,
+        )
+        knowledge_qml = (qml_root / "pages" / "KnowledgePage.qml").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("OCR", knowledge_qml)
+
+    def test_diagnostic_text_does_not_mention_ocr(self):
+        with TemporaryDirectory() as temporary:
+            settings = self._settings(Path(temporary))
+
+            text = diagnostic_text(settings)
+
+        self.assertIn("Projeto Codex", text)
+        self.assertNotIn("OCR", text)
+        self.assertNotIn("Tesseract", text)
 
     def test_background_state_properties_do_not_block_or_poll_the_ui_thread(self):
         with TemporaryDirectory() as temporary:
@@ -2525,7 +2844,7 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(bridge.codeAnalysisRelease, "")
             self.assertEqual(bridge.codeAnalysisReleaseItems, [])
 
-    def test_senior_profile_unlocks_and_persists_explicit_response_mode(self):
+    def test_expert_profile_unlocks_and_persists_explicit_response_mode(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
             settings = self._settings(root)
@@ -2539,21 +2858,21 @@ class QmlFrontendTest(unittest.TestCase):
             )
             bridge = ChatBridge(settings, database, preferences)
 
-            self.assertFalse(bridge.seniorProfileEnabled)
+            self.assertFalse(bridge.expertProfileEnabled)
             self.assertEqual(bridge.vrResponseMode, "auto")
             bridge.setVrResponseMode("support")
             self.assertEqual(bridge.vrResponseMode, "auto")
 
-            bridge.setSeniorProfileEnabled(True)
+            bridge.setExpertProfileEnabled(True)
             bridge.setVrResponseMode("implementation")
-            self.assertTrue(bridge.seniorProfileEnabled)
+            self.assertTrue(bridge.expertProfileEnabled)
             self.assertEqual(bridge.vrResponseMode, "implementation")
 
             reopened = ChatBridge(settings, database, preferences)
-            self.assertTrue(reopened.seniorProfileEnabled)
+            self.assertTrue(reopened.expertProfileEnabled)
             self.assertEqual(reopened.vrResponseMode, "implementation")
 
-            reopened.setSeniorProfileEnabled(False)
+            reopened.setExpertProfileEnabled(False)
             self.assertEqual(reopened.vrResponseMode, "auto")
 
     def test_project_folder_browser_lists_directories_and_adds_current_path(self):
@@ -3348,6 +3667,8 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn('objectName: "expertProfileStrip"', chat_qml)
         self.assertIn("Behavior on expertReveal", chat_qml)
         self.assertIn("VrProfileIcon", chat_qml)
+        self.assertIn('key: "adaptive"', chat_qml)
+        self.assertIn('label: "Adaptativa"', chat_qml)
         self.assertIn("expertSenior", chat_qml)
         self.assertIn("expertTraining", chat_qml)
         self.assertIn('"Treinamento"', chat_qml)
@@ -3362,7 +3683,7 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn("Theme.palette.chatControl", profile_qml)
         self.assertIn("VrChatComposer {", chat_qml)
         self.assertIn("contentHeight + topPadding + bottomPadding", composer_qml)
-        self.assertIn("Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(Theme.scaledGeometry(54)", composer_qml)
+        self.assertIn("Math.min(composerCard.page.chatMainHandle.height * 0.28, Math.max(Theme.scaledGeometry(70)", composer_qml)
         self.assertIn(
             'variant: composerCard.page.chatBridge.vrMode !== "off" ? "primary" : "ghost"',
             composer_qml,
@@ -3371,12 +3692,23 @@ class QmlFrontendTest(unittest.TestCase):
         self.assertIn("hasImageAttachments", composer_qml)
         self.assertIn("fillMode: Image.PreserveAspectCrop", composer_qml)
         markdown_qml = (MAIN_QML.parent / "components" / "VrMarkdownContent.qml").read_text(encoding="utf-8")
-        self.assertIn("Theme.bodySize", markdown_qml)
+        self.assertIn("Theme.markdownBodySize", markdown_qml)
         self.assertIn("Qt.PointingHandCursor", markdown_qml)
         self.assertIn('objectName: "messageScrollBar"', chat_qml)
         self.assertIn("if (followTail) tailTimer.restart()", chat_qml)
         self.assertIn("ScrollBar.vertical: VrScrollBar", chat_qml)
         self.assertIn('"Como posso ajudar no projeto " + projectLabel + "?"', chat_qml)
+
+    def test_vr_ultra_adaptive_option_uses_correct_portuguese_label(self):
+        settings_qml = (
+            MAIN_QML.parent / "pages" / "VRUltraSettingsPage.qml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            '"label": "Adaptativa — identifica a abordagem adequada pelo contexto"',
+            settings_qml,
+        )
+        self.assertNotIn("abordagem adequate", settings_qml)
 
     def test_trashing_a_conversation_does_not_block_the_ui_thread(self):
         with TemporaryDirectory() as temporary:
@@ -3744,7 +4076,6 @@ class QmlFrontendTest(unittest.TestCase):
             "VrModelPicker.qml",
             "VrReasoningPicker.qml",
             "VrPermissionPicker.qml",
-            "VrContextButton.qml",
         ):
             source = (components / component_name).read_text(encoding="utf-8")
             self.assertIn("Behavior on scale", source, component_name)
@@ -3827,11 +4158,11 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertEqual(bridge.activityElapsedLabel, "1m 05s")
 
     def test_markdown_display_repairs_glued_sentences_without_touching_code(self):
-        source = "Versão pronta.Próximo passo: `arquivo.MD`."
+        source = "Versão pronta.Próximo passo: `código`."
 
         self.assertEqual(
             markdown_for_display(source),
-            "Versão pronta. Próximo passo: `arquivo.MD`.",
+            "Versão pronta. Próximo passo: `código`.",
         )
 
     def test_segments_for_display_splits_fenced_code_cards(self):
@@ -3975,8 +4306,8 @@ class QmlFrontendTest(unittest.TestCase):
                 thumbnail = next((sub for item in content_item.childItems() for sub in item.childItems() if sub.property("objectName") == "chatAttachmentThumbnail"), None)
                 self.assertIsNotNone(thumbnail)
                 self.assertTrue(thumbnail.property("visible"))
-                self.assertEqual(thumbnail.property("width"), 60)
-                self.assertEqual(thumbnail.property("height"), 60)
+                self.assertEqual(thumbnail.property("width"), 64)
+                self.assertEqual(thumbnail.property("height"), 64)
                 attachment_list = window.findChild(QObject, "chatAttachmentList")
                 self.assertIsNotNone(attachment_list)
                 self.assertEqual(attachment_list.property("count"), 1)
@@ -4138,16 +4469,13 @@ class QmlFrontendTest(unittest.TestCase):
             theme_qml = (
                 MAIN_QML.parent / "theme" / "Theme.qml"
             ).read_text(encoding="utf-8")
-            # VR/VR Ultra keep the fixed orange identity (ring/halo/border/label)
+            # VR/VR Ultra keep the fixed orange identity (ring/halo/label)
             # instead of inheriting the theme's remapped accent.
             self.assertIn("readonly property color vrAccent", theme_qml)
-            self.assertIn(
-                "composerInput.activeFocus ? Theme.vrAccent : Qt.alpha(Theme.vrAccent, 0.45)",
-                composer_qml,
-            )
-            # O realce laranja do VR só vale no composer expandido; no retraído
-            # o campo mantém a borda neutra.
-            self.assertIn("composerCard.vrActive && !composerCard.isCompact", composer_qml)
+            # A aura laranja saiu do contorno do composer: em repouso e no foco
+            # o campo mantém a borda neutra; o laranja fica só no arraste.
+            self.assertNotIn("composerCard.vrActive && !composerCard.isCompact", composer_qml)
+            self.assertNotIn("Qt.alpha(Theme.vrAccent, 0.45)", composer_qml)
             self.assertIn("composerCard.vrActive ? Theme.vrAccent : Theme.palette.brandOrange", composer_qml)
             self.assertIn("? Theme.vrAccent", composer_qml)
             self.assertIn("Qt.alpha(Theme.vrAccent, 0.12)", chat_preview_qml)
@@ -4256,61 +4584,21 @@ class QmlFrontendTest(unittest.TestCase):
             bridge.close()
 
 
-    def test_context_uses_provider_model_metadata_and_hides_without_it(self):
-        with TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            settings = self._settings(root)
-            database = MaryDatabase(
-                settings.database_path,
-                root=settings.root,
-                backup_portable_migration=False,
-            )
-            conversation_id = database.create_conversation(
-                "Contexto", "codex", "gpt-provider", settings.root
-            )
-            database.update_conversation(
-                conversation_id,
-                context_used_tokens=25_800,
-                context_window_tokens=200_000,
-            )
-            bridge = ChatBridge(
-                settings,
-                database,
-                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
-            )
-            bridge.selectConversationId(conversation_id)
-            bridge._model_items = [{
-                "key": "codex:gpt-provider",
-                "provider": "codex",
-                "value": "gpt-provider",
-                "displayName": "GPT Provider",
-                "contextWindow": 258_000,
-            }]
-
-            self.assertTrue(bridge.hasContextWindow)
-            self.assertEqual(bridge.contextUsageFraction, 0.1)
-            self.assertIn("258.000", bridge.contextUsageLabel)
-            database.update_conversation(conversation_id, context_used_tokens=0)
-            self.assertFalse(bridge.hasContextWindow)
-            database.update_conversation(conversation_id, context_used_tokens=25_800)
-            self.assertTrue(bridge.hasContextWindow)
-            bridge._model_items[0].pop("contextWindow")
-            self.assertFalse(bridge.hasContextWindow)
-
-            browser_event = RuntimeEvent(
-                conversation_id,
-                "tool_event",
-                payload={
-                    "item": {
-                        "type": "browser_navigation",
-                        "url": "https://example.com/preview",
-                    }
-                },
-            )
-            self.assertEqual(
-                bridge._browser_address_from_event(browser_event),
-                "https://example.com/preview",
-            )
+    def test_browser_address_from_event_prefers_preview_url(self):
+        browser_event = RuntimeEvent(
+            "conversation",
+            "tool_event",
+            payload={
+                "item": {
+                    "type": "browser_navigation",
+                    "url": "https://example.com/preview",
+                }
+            },
+        )
+        self.assertEqual(
+            ChatBridge._browser_address_from_event(browser_event),
+            "https://example.com/preview",
+        )
 
     def test_ultra_agent_pool_is_independent_from_the_orchestrator_selection(self):
         with TemporaryDirectory() as temporary:
@@ -4594,7 +4882,7 @@ class QmlFrontendTest(unittest.TestCase):
             self.assertTrue(settings_results.property("visible"))
             self.assertGreater(settings_results.property("count"), 0)
             self.assertEqual(chat_bridge.search, "")
-            self.assertEqual(tab_bar.property("count"), 8)
+            self.assertEqual(tab_bar.property("count"), 9)
             self.assertEqual(tab_bar.property("currentIndex"), 0)
             self.assertTrue(settings_hub.activateSettingSearchResult(0))
             self.application.processEvents()
@@ -4683,6 +4971,301 @@ class QmlFrontendTest(unittest.TestCase):
             chat_settings = window.findChild(QObject, "chatSettingsButton")
             self.assertIsNotNone(chat_settings)
             self.assertTrue(chat_settings.property("visible"))
+
+    def test_knowledge_transfer_tab_runs_export_and_import_actions(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            bridge = self._bridge(
+                root, theme="dark_orange", initial_page="Configurações"
+            )
+            studio_bridge = StudioBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            chat_bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            export_calls = []
+            import_calls = []
+            detection = {
+                "is_valid": True,
+                "knowledge_package": True,
+                "scope": "knowledge",
+                "source_archive": str(root / "conhecimento.zip"),
+                "package_id": "knowledge-test",
+                "exported_at": "2026-01-01T00:00:00+00:00",
+                "origins": [
+                    {
+                        "source": "wiki",
+                        "source_origin": "vrwiki",
+                        "label": "VRWiki pública",
+                        "documents": 2,
+                        "assets": 1,
+                    }
+                ],
+                "modules": ["Fiscal"],
+                "document_count": 2,
+                "asset_count": 1,
+                "total_bytes": 2048,
+                "missing_asset_count": 0,
+                "preview": [],
+                "manifest": {},
+            }
+
+            def fake_export(
+                workspace, destination, *, origins=None, module="", progress=None
+            ):
+                export_calls.append(
+                    (
+                        tuple(tuple(item) for item in origins),
+                        module,
+                        str(destination),
+                    )
+                )
+                return {
+                    "success": True,
+                    "destination": str(destination),
+                    "package_id": "knowledge-test",
+                    "document_count": 2,
+                    "asset_count": 1,
+                    "missing_asset_count": 0,
+                    "file_count": 3,
+                    "total_bytes": 2048,
+                }
+
+            def fake_import(
+                workspace,
+                archive,
+                *,
+                mode="merge",
+                origins=None,
+                database=None,
+                progress=None,
+            ):
+                import_calls.append((str(archive), mode))
+                return {
+                    "success": True,
+                    "package_id": "knowledge-test",
+                    "mode": mode,
+                    "document_count": 2,
+                    "asset_count": 1,
+                    "created": 2,
+                    "updated": 0,
+                    "unchanged": 0,
+                    "review_queued": 0,
+                    "error_count": 0,
+                    "errors": [],
+                }
+
+            with (
+                patch.object(
+                    knowledgetransfer,
+                    "export_knowledge_package",
+                    side_effect=fake_export,
+                ),
+                patch.object(
+                    knowledgetransfer,
+                    "import_knowledge_package_archive",
+                    side_effect=fake_import,
+                ),
+                patch.object(
+                    knowledgetransfer,
+                    "detect_knowledge_package_archive",
+                    return_value=detection,
+                ),
+                patch.object(
+                    knowledgetransfer.QFileDialog,
+                    "getSaveFileName",
+                    return_value=(str(root / "conhecimento.zip"), ""),
+                ),
+                patch.object(
+                    knowledgetransfer.QFileDialog,
+                    "getOpenFileName",
+                    return_value=(str(root / "conhecimento.zip"), ""),
+                ),
+            ):
+                engine = create_engine(bridge, chat_bridge, studio_bridge)
+                self.application.processEvents()
+                self.assertEqual(
+                    len(engine.rootObjects()),
+                    1,
+                    [warning.toString() for warning in engine._qml_warnings],
+                )
+                window = engine.rootObjects()[0]
+                window.setWidth(1280)
+                window.setHeight(820)
+                window.show()
+                settings_page = window.findChild(QObject, "settingsPage")
+                settings_page.setProperty("tabIndex", 8)
+                page = None
+                for _attempt in range(200):
+                    self.application.processEvents()
+                    page = window.findChild(
+                        QObject, "knowledgeTransferSettingsPage"
+                    )
+                    if page is not None:
+                        break
+                    QTest.qWait(10)
+                self.assertIsNotNone(page)
+                progress_bar = window.findChild(
+                    QObject, "knowledgeTransferProgressBar"
+                )
+                self.assertIsNotNone(progress_bar)
+                self.assertTrue(bool(progress_bar.property("showPercentage")))
+
+                export_button = window.findChild(
+                    QObject, "exportKnowledgePackageButton"
+                )
+                self.assertIsNotNone(export_button)
+                self.assertTrue(export_button.property("enabled"))
+                self.assertTrue(
+                    QMetaObject.invokeMethod(export_button, "click")
+                )
+                for _attempt in range(200):
+                    self.application.processEvents()
+                    if export_calls and not chat_bridge.knowledgeTransferRunning:
+                        break
+                    QTest.qWait(10)
+                self.assertEqual(len(export_calls), 1)
+                self.assertEqual(
+                    export_calls[0][0],
+                    (("wiki", "vrwiki"), ("kb", "movidesk")),
+                )
+                self.assertTrue(export_calls[0][2].endswith(".zip"))
+                self.assertIn("Pacote exportado", page.property("resultMessage"))
+
+                import_button = window.findChild(
+                    QObject, "importKnowledgePackageButton"
+                )
+                self.assertIsNotNone(import_button)
+                self.assertTrue(
+                    QMetaObject.invokeMethod(import_button, "click")
+                )
+                dialog = window.findChild(QObject, "knowledgeImportDialog")
+                for _attempt in range(200):
+                    self.application.processEvents()
+                    if dialog.property("visible"):
+                        break
+                    QTest.qWait(10)
+                self.assertTrue(dialog.property("visible"))
+                summary = window.findChild(QObject, "knowledgeImportSummary")
+                self.assertIsNotNone(summary)
+                self.assertIn("knowledge-test", summary.property("text"))
+                mode_combo = window.findChild(QObject, "knowledgeImportModeCombo")
+                self.assertIsNotNone(mode_combo)
+                self.assertEqual(mode_combo.property("currentIndex"), 0)
+                mode_combo.setProperty("currentIndex", 1)
+                self.application.processEvents()
+                restore_warning = window.findChild(
+                    QObject, "knowledgeImportRestoreWarning"
+                )
+                self.assertTrue(restore_warning.property("visible"))
+                mode_combo.setProperty("currentIndex", 0)
+                self.application.processEvents()
+
+                confirm = window.findChild(
+                    QObject, "confirmKnowledgeImportButton"
+                )
+                self.assertIsNotNone(confirm)
+                self.assertTrue(QMetaObject.invokeMethod(confirm, "click"))
+                for _attempt in range(200):
+                    self.application.processEvents()
+                    if import_calls and not chat_bridge.knowledgeTransferRunning:
+                        break
+                    QTest.qWait(10)
+                self.assertEqual(
+                    import_calls, [(str(root / "conhecimento.zip"), "merge")]
+                )
+                self.assertFalse(dialog.property("visible"))
+                self.assertIn(
+                    "Importação concluída", page.property("resultMessage")
+                )
+                self.assertFalse(engine._qml_warnings, [w.toString() for w in engine._qml_warnings])
+            studio_bridge.close()
+            chat_bridge.close()
+            self.application.processEvents()
+
+    def test_sidebar_hover_transition_never_darkens_below_its_endpoints(self):
+        from test_chat_presentation import find_items
+
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path,
+                root=settings.root,
+                backup_portable_migration=False,
+            )
+            bridge = self._bridge(root, theme="ocean", initial_page="Configurações")
+            chat_bridge = ChatBridge(
+                settings,
+                database,
+                QSettings(str(root / "preferences.ini"), QSettings.IniFormat),
+            )
+            engine = create_engine(bridge, chat_bridge)
+            self.application.processEvents()
+            self.assertEqual(
+                len(engine.rootObjects()),
+                1,
+                [warning.toString() for warning in engine._qml_warnings],
+            )
+            window = engine.rootObjects()[0]
+            window.setWidth(1280)
+            window.setHeight(820)
+            window.show()
+            QTest.qWait(250)
+            self.assertFalse(bridge.reduceMotion)
+
+            items = {
+                item.property("title"): item
+                for item in find_items(window.contentItem(), "settingsNavItem")
+            }
+            self.assertIn("Revisão", items)
+            self.assertIn("Vídeos", items)
+            review = items["Revisão"]
+
+            def sample_row(item):
+                image = window.grabWindow()
+                ratio = image.devicePixelRatio()
+                point = item.mapToScene(QPointF(item.width() - 8, item.height() / 2))
+                return image.pixelColor(round(point.x() * ratio), round(point.y() * ratio))
+
+            def luminance(color):
+                return 0.2126 * color.redF() + 0.7152 * color.greenF() + 0.0722 * color.blueF()
+
+            rest = sample_row(review)
+            target = review.mapToScene(
+                QPointF(review.width() / 2, review.height() / 2)
+            ).toPoint()
+            QTest.mouseMove(window, target)
+            frames = []
+            for _ in range(24):
+                QTest.qWait(8)
+                frames.append(sample_row(review))
+            QTest.qWait(140)
+            hovered = sample_row(review)
+            self.assertGreater(luminance(hovered), luminance(rest))
+            floor = min(luminance(rest), luminance(hovered)) - 0.02
+            for index, frame in enumerate(frames):
+                self.assertGreaterEqual(
+                    luminance(frame),
+                    floor,
+                    f"hover frame {index} darker than the endpoints: {frame.name()}",
+                )
+
+            QTest.mouseMove(window, QPoint(1, 1))
+            window.close()
+            engine.deleteLater()
+            self.application.processEvents()
 
     def test_all_pages_load_in_engine_with_centered_page_column(self):
         with TemporaryDirectory() as temporary:
@@ -5724,73 +6307,338 @@ class QmlFrontendTest(unittest.TestCase):
                 self.application.processEvents()
                 self.assertFalse(import_progress_card.property("visible"))
 
-                directory_result = {
-                    "is_valid": True,
-                    "source_root": str(root / "fontes"),
-                    "suggested_release_id": "decompiled-vrmaster-1",
-                    "suggested_name": "Fontes Descompilados: VRMaster",
-                    "applications": [{"app_id": "vrmaster"}],
-                    "total_java_files": 2,
-                }
-                directory_button = find_by_text(import_card, "Importar código descompilado")
-                self.assertIsNotNone(directory_button)
-                with (
-                    patch.object(
-                        codeadmin, "detect_decompiled_source", return_value=directory_result
-                    ),
-                    patch.object(
-                        codeadmin.QFileDialog,
-                        "getExistingDirectory",
-                        return_value=directory_result["source_root"],
-                    ),
-                ):
-                    self.assertTrue(QMetaObject.invokeMethod(directory_button, "click"))
-                    for _attempt in range(200):
-                        self.application.processEvents()
-                        if dialog.property("visible"):
-                            break
-                        QTest.qWait(10)
-                self.assertTrue(dialog.property("visible"))
-                directory_calls = []
-
-                def fake_directory_import(workspace, source_dir, *, release_id="", package_name="", progress=None):
-                    directory_calls.append((str(source_dir), release_id, package_name))
-                    return {
-                        "success": True,
-                        "release_id": release_id,
-                        "package_name": package_name,
-                        "total_indexed_sources": 2,
-                        "imported_applications": 1,
-                        "package": {},
-                    }
-
-                confirm_button = find_by_text(dialog.property("contentItem"), "Importar e Indexar")
-                self.assertIsNotNone(confirm_button)
-                with patch.object(
-                    codeadmin,
-                    "import_decompiled_source",
-                    side_effect=fake_directory_import,
-                ):
-                    self.assertTrue(QMetaObject.invokeMethod(confirm_button, "click"))
-                    for _attempt in range(200):
-                        self.application.processEvents()
-                        if directory_calls and not chat_bridge.releaseSnapshotRunning:
-                            break
-                        QTest.qWait(10)
-                self.assertFalse(dialog.property("visible"))
-                self.assertEqual(
-                    directory_calls,
-                    [(
-                        directory_result["source_root"],
-                        "decompiled-vrmaster-1",
-                        "Fontes Descompilados: VRMaster",
-                    )],
+                # Application import preview: real percent from the bridge.
+                application_progress_bar = find_by_name(
+                    window.contentItem(), "applicationImportProgressBar"
                 )
+                self.assertIsNotNone(application_progress_bar)
+                chat_bridge._application_import_preview = {"state": "running"}
+                chat_bridge._release_snapshot_running = True
+                chat_bridge._release_snapshot_progress = 42.5
+                chat_bridge._release_snapshot_status = "Copiando JARs — 5/10 · test.jar"
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                QTest.qWait(50)
+                self.assertAlmostEqual(
+                    float(application_progress_bar.property("value")), 42.5, places=1
+                )
+                self.assertFalse(bool(application_progress_bar.property("indeterminate")))
+                self.assertTrue(bool(application_progress_bar.property("showPercentage")))
+                chat_bridge._application_import_preview = {}
+                chat_bridge._release_snapshot_running = False
+                chat_bridge._release_snapshot_progress = 0.0
+                chat_bridge._release_snapshot_status = ""
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                self.assertFalse(application_progress_bar.property("visible"))
+
             finally:
                 window.close()
                 engine.deleteLater()
                 self.application.processEvents()
 
+
+    def test_imported_package_ultra_choice_dialog_flow(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self._settings(root)
+            database = MaryDatabase(
+                settings.database_path, root=settings.root, backup_portable_migration=False
+            )
+            preferences = QSettings(str(root / "preferences.ini"), QSettings.IniFormat)
+            bridge = self._bridge(root, initial_page="Configurações")
+            chat_bridge = ChatBridge(settings, database, preferences)
+
+            engine = create_engine(bridge, chat_bridge)
+            self.application.processEvents()
+            window = engine.rootObjects()[0]
+            window.setWidth(1280)
+            window.setHeight(820)
+            window.show()
+
+            def named_objects(name):
+                return window.findChildren(QObject, name)
+
+            try:
+                settings_page = window.findChild(QObject, "settingsPage")
+                self.assertIsNotNone(settings_page)
+                settings_page.setProperty("tabIndex", 3)
+                apps_page = window.findChild(QObject, "appsSettingsPage")
+                self.assertIsNotNone(apps_page)
+                for _attempt in range(600):
+                    self.application.processEvents()
+                    if chat_bridge._apps_catalog_thread is None:
+                        break
+                    QTest.qWait(10)
+                self.assertIsNone(chat_bridge._apps_catalog_thread)
+
+                # Sem pendência o diálogo não existe na árvore.
+                self.assertIsNone(
+                    window.findChild(QObject, "importedPackageUltraChoiceDialog")
+                )
+                self.assertIsNone(
+                    window.findChild(QObject, "useImportedPackageInUltraButton")
+                )
+                self.assertIsNone(
+                    window.findChild(QObject, "chooseImportedPackageAppsButton")
+                )
+
+                chat_bridge._apps_catalog_data = {
+                    "data": {
+                        "applications": {
+                            "vrmaster": {
+                                "name": "VRMaster",
+                                "versions": {
+                                    "4.1.0": {
+                                        "variants": {
+                                            "sha-master": {
+                                                "variant_id": "sha-master",
+                                                "origin_packages": [
+                                                    {
+                                                        "package_id": "pkg-ready",
+                                                        "index_state": "ready",
+                                                    },
+                                                    {
+                                                        "package_id": "pkg-one",
+                                                        "index_state": "ready",
+                                                    },
+                                                ],
+                                            }
+                                        }
+                                    }
+                                },
+                            },
+                            "vrpdv": {
+                                "name": "VRPdv",
+                                "versions": {
+                                    "3.2.0": {
+                                        "variants": {
+                                            "sha-pdv": {
+                                                "variant_id": "sha-pdv",
+                                                "origin_packages": [
+                                                    {
+                                                        "package_id": "pkg-one",
+                                                        "index_state": "ready",
+                                                    }
+                                                ],
+                                            }
+                                        }
+                                    }
+                                },
+                            },
+                        },
+                        "packages": {
+                            "pkg-one": {
+                                "package_id": "pkg-one",
+                                "name": "Pacote Importado",
+                                "composition": [
+                                    {
+                                        "app_id": "vrmaster",
+                                        "version": "4.1.0",
+                                        "variant_id": "sha-master",
+                                    },
+                                    {"app_id": "vrpdv", "version": "3.2.0"},
+                                ],
+                            }
+                        },
+                    }
+                }
+                chat_bridge._ultra_application_contexts = [
+                    {
+                        "app_id": "vrmaster",
+                        "version": "4.1.0",
+                        "variant_id": "sha-master",
+                        "package_id": "pkg-ready",
+                    }
+                ]
+                chat_bridge._CodeAdmin_domain._save_application_contexts()
+                chat_bridge.setCodeAnalysisEnabled(True)
+                self.application.processEvents()
+                self.assertTrue(chat_bridge.ultraApplicationContextsReady)
+                self.assertTrue(chat_bridge.codeAnalysisEnabled)
+                ready_contexts = [
+                    dict(item) for item in chat_bridge._ultra_application_contexts
+                ]
+
+                chat_bridge._pending_ultra_package_choice_id = "pkg-one"
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+
+                dialogs = named_objects("importedPackageUltraChoiceDialog")
+                self.assertEqual(len(dialogs), 1)
+                self.assertEqual(
+                    len(named_objects("useImportedPackageInUltraButton")), 1
+                )
+                self.assertEqual(
+                    len(named_objects("chooseImportedPackageAppsButton")), 1
+                )
+                dialog = dialogs[0]
+                self.assertTrue(dialog.property("visible"))
+                self.assertTrue(dialog.property("opened"))
+                self.assertEqual(dialog.property("packageId"), "pkg-one")
+                self.assertEqual(dialog.property("applicationCount"), 2)
+
+                # stateChanged sem mudar o packageId não duplica o diálogo.
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                self.assertEqual(
+                    len(named_objects("importedPackageUltraChoiceDialog")), 1
+                )
+
+                # Composição estruturalmente inválida: falha isolada, sem tocar
+                # no estado do catálogo nem na prontidão do escopo atual.
+                use_button = window.findChild(
+                    QObject, "useImportedPackageInUltraButton"
+                )
+                self.assertTrue(QMetaObject.invokeMethod(use_button, "click"))
+                self.application.processEvents()
+                self.assertEqual(chat_bridge.applicationsCatalogError, "")
+                self.assertEqual(chat_bridge._pending_ultra_package_choice_id, "pkg-one")
+                self.assertTrue(
+                    chat_bridge.pendingImportedPackageForUltra.get("error")
+                )
+                self.assertEqual(
+                    chat_bridge.pendingImportedPackageForUltra.get("packageId"),
+                    "pkg-one",
+                )
+                dialog = window.findChild(QObject, "importedPackageUltraChoiceDialog")
+                self.assertIsNotNone(dialog)
+                self.assertTrue(dialog.property("visible"))
+                self.assertTrue(dialog.property("opened"))
+                error_text = window.findChild(
+                    QObject, "importedPackageUltraChoiceError"
+                )
+                self.assertIsNotNone(error_text)
+                self.assertTrue(error_text.property("visible"))
+                self.assertIn("composição", error_text.property("text"))
+                self.assertEqual(chat_bridge._ultra_application_contexts, ready_contexts)
+                self.assertTrue(chat_bridge.ultraApplicationContextsReady)
+                self.assertTrue(chat_bridge.codeAnalysisEnabled)
+
+                # Escolher por aplicativo descarta a falha e preserva o escopo.
+                apps_page.setProperty("navigationLevel", 1)
+                apps_page.setProperty("importToolsExpanded", True)
+                self.application.processEvents()
+                choose_button = window.findChild(
+                    QObject, "chooseImportedPackageAppsButton"
+                )
+                self.assertTrue(QMetaObject.invokeMethod(choose_button, "click"))
+                QTest.qWait(1)
+                self.assertEqual(chat_bridge.pendingImportedPackageForUltra, {})
+                self.assertEqual(chat_bridge._pending_ultra_package_choice_error, "")
+                self.assertEqual(apps_page.property("navigationLevel"), 0)
+                self.assertFalse(bool(apps_page.property("importToolsExpanded")))
+                self.assertEqual(chat_bridge._ultra_application_contexts, ready_contexts)
+                self.assertTrue(chat_bridge.ultraApplicationContextsReady)
+                self.assertTrue(chat_bridge.codeAnalysisEnabled)
+                self.assertEqual(
+                    named_objects("importedPackageUltraChoiceDialog"), []
+                )
+                self.assertEqual(
+                    named_objects("importedPackageUltraChoiceError"), []
+                )
+
+                # Composição válida: resolve a pendência e destrói o diálogo.
+                chat_bridge._apps_catalog_data["data"]["packages"]["pkg-one"][
+                    "composition"
+                ] = [
+                    {
+                        "app_id": "vrmaster",
+                        "version": "4.1.0",
+                        "variant_id": "sha-master",
+                    },
+                    {"app_id": "vrpdv", "version": "3.2.0", "variant_id": "sha-pdv"},
+                ]
+                chat_bridge._pending_ultra_package_choice_id = "pkg-one"
+                chat_bridge.stateChanged.emit()
+                self.application.processEvents()
+                self.assertEqual(
+                    len(named_objects("importedPackageUltraChoiceDialog")), 1
+                )
+                use_button = window.findChild(
+                    QObject, "useImportedPackageInUltraButton"
+                )
+                self.assertTrue(QMetaObject.invokeMethod(use_button, "click"))
+                QTest.qWait(1)
+                self.assertEqual(chat_bridge.pendingImportedPackageForUltra, {})
+                contexts = chat_bridge._ultra_application_contexts
+                self.assertEqual(len(contexts), 2)
+                self.assertTrue(
+                    all(item["package_id"] == "pkg-one" for item in contexts)
+                )
+                self.assertEqual(
+                    {item["app_id"] for item in contexts}, {"vrmaster", "vrpdv"}
+                )
+                self.assertEqual(
+                    named_objects("importedPackageUltraChoiceDialog"), []
+                )
+                self.assertEqual(
+                    named_objects("useImportedPackageInUltraButton"), []
+                )
+                self.assertEqual(
+                    named_objects("chooseImportedPackageAppsButton"), []
+                )
+
+                # Pacote já importado: o cartão reabre a pergunta do Ultra.
+                chat_bridge._packages_catalog = [
+                    {
+                        "package_id": "pkg-one",
+                        "name": "Pacote Importado",
+                        "imported_at": "2026-01-01T00:00:00+00:00",
+                        "composition": [
+                            {
+                                "app_id": "vrmaster",
+                                "version": "4.1.0",
+                                "variant_id": "sha-master",
+                            },
+                            {
+                                "app_id": "vrpdv",
+                                "version": "3.2.0",
+                                "variant_id": "sha-pdv",
+                            },
+                        ],
+                    }
+                ]
+                chat_bridge.stateChanged.emit()
+                apps_page.setProperty("navigationLevel", 0)
+                apps_page.setProperty("packagesExpanded", True)
+                self.application.processEvents()
+                QTest.qWait(50)
+                def find_by_name(item, name):
+                    if item.objectName() == name:
+                        return item
+                    for child in item.childItems():
+                        found = find_by_name(child, name)
+                        if found is not None:
+                            return found
+                    return None
+
+                use_package_button = find_by_name(
+                    window.contentItem(), "usePackageInUltraButton"
+                )
+                self.assertIsNotNone(use_package_button)
+                self.assertTrue(
+                    QMetaObject.invokeMethod(use_package_button, "click")
+                )
+                self.application.processEvents()
+                QTest.qWait(1)
+                dialogs = named_objects("importedPackageUltraChoiceDialog")
+                self.assertEqual(len(dialogs), 1)
+                self.assertEqual(dialogs[0].property("packageId"), "pkg-one")
+                self.assertTrue(dialogs[0].property("visible"))
+                choose_button = window.findChild(
+                    QObject, "chooseImportedPackageAppsButton"
+                )
+                self.assertTrue(QMetaObject.invokeMethod(choose_button, "click"))
+                QTest.qWait(1)
+                self.assertEqual(chat_bridge.pendingImportedPackageForUltra, {})
+                self.assertEqual(
+                    named_objects("importedPackageUltraChoiceDialog"), []
+                )
+            finally:
+                window.close()
+                engine.deleteLater()
+                self.application.processEvents()
 
     def test_software_rendering_flags_and_safe_mode_args(self):
         from vrsoft_extractor.mary.frontend.app import build_parser

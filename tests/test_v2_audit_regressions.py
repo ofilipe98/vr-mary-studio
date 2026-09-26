@@ -4,7 +4,6 @@ import sqlite3
 import pytest
 
 from vrsoft_extractor.mary.execution import ExecutionBudget, ExecutionContext, ExecutionCancelledError
-from vrsoft_extractor.mary.execution.budget import CallReservationError
 from vrsoft_extractor.mary.execution.repository import ResearchRepository
 from vrsoft_extractor.mary.retrieval.embedding_contract import EmbeddingBackend, FallbackEmbeddingBackend
 from vrsoft_extractor.mary.retrieval.semantic_index import SemanticIndex
@@ -20,15 +19,15 @@ def test_context_legacy_cancel_flag_stops_execution(tmp_path):
         context.check_cancelled()
 
 
-def test_budget_parallel_limit_does_not_spend_a_rejected_call():
-    budget = ExecutionBudget(max_calls=6, max_parallel=1)
-    budget.acquire_call()
-    with pytest.raises(CallReservationError):
-        budget.acquire_call()
-    assert budget.calls_made == 1
-    budget.release_call()
-    budget.acquire_call()
-    assert budget.calls_made == 2
+def test_budget_telemetry_does_not_reject_calls_when_scheduler_is_saturated():
+    budget = ExecutionBudget(max_parallel=1)
+    for _ in range(120):
+        assert budget.acquire_call() is None
+    assert budget.calls_made == 120
+    assert budget.calls_in_flight == 120
+    for _ in range(120):
+        budget.release_call()
+    assert budget.calls_in_flight == 0
 
 
 def test_empty_replacement_removes_old_chunks(tmp_path):
@@ -127,20 +126,31 @@ def test_purge_removes_only_checkpoint_of_deleted_conversation(tmp_path):
     assert repo.get_run('keep') is not None
 
 
-def test_resume_budget_preserves_limits_usage_and_active_time():
+def test_resume_budget_restores_telemetry_without_reactivating_legacy_limits():
     now = [100.0]
-    budget = ExecutionBudget(max_calls=10, max_active_seconds=100, max_retries_per_worker=1, token_limit=500, clock=lambda: now[0])
+    budget = ExecutionBudget(clock=lambda: now[0])
     budget.acquire_call()
     budget.release_call(tokens_used=100)
     now[0] += 25
     snapshot = budget.to_dict()
-    now[0] += 1000  # Paused wall time is not active execution time.
+    now[0] += 1000
     restored = ExecutionBudget.from_snapshot(snapshot, clock=lambda: now[0])
-    assert restored.remaining_calls() == 9
-    assert restored.time_remaining() == 75
+    assert restored.remaining_calls() is None
+    assert restored.time_remaining() is None
     assert restored.tokens.real == 100
-    assert restored.token_limit == 500
-    assert restored.max_retries_per_worker == 1
+    assert restored.calls_made == 1
+    assert restored.has_synthesis_capacity() is True
+    legacy = {
+        "max_active_seconds": 1,
+        "max_calls": 1,
+        "calls_made": 15,
+        "elapsed_seconds": 1,
+        "tokens": {"real": 100},
+    }
+    legacy_restored = ExecutionBudget.from_snapshot(legacy, clock=lambda: now[0])
+    assert legacy_restored.calls_made == 15
+    assert legacy_restored.acquire_call() is None
+    assert legacy_restored.remaining_calls() is None
 
 
 def test_long_unbroken_text_is_chunked_with_a_hard_limit():

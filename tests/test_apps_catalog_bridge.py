@@ -54,6 +54,79 @@ def test_refresh_loading_flag_flips_immediately_and_clears(bridge):
     assert bridge.applicationsCatalogLoading is False
 
 
+def test_metadata_refresh_updates_release_state_without_catalog_refresh(
+    bridge, monkeypatch
+):
+    statuses = [{
+        "release_id": "r1",
+        "release_manifest_sha256": "hash1",
+        "state": "completed",
+        "freshness": "fresh",
+        "jar_count": 1,
+    }]
+    monkeypatch.setattr(
+        codeadmin.ErpReleaseCatalog,
+        "list_statuses",
+        lambda self: list(statuses),
+    )
+    bridge._release_coverage_cache["r1:hash1"] = {"covered_jar_count": 1}
+
+    assert bridge._apps_catalog_thread is None
+    assert bridge.metaObject().indexOfMethod(
+        "refreshCodeAnalysisReleasesMetadata()"
+    ) >= 0
+    with (
+        patch.object(
+            codeadmin.CodeAdminDomain,
+            "refreshApplicationsCatalog",
+            autospec=True,
+        ) as refresh_catalog,
+        patch.object(
+            codeadmin.CodeAdminDomain,
+            "_refresh_code_analysis_jar_sources",
+            autospec=True,
+        ) as refresh_jar_sources,
+        patch.object(
+            codeadmin.CodeAdminDomain,
+            "refreshCodeProcessingStatus",
+            autospec=True,
+        ) as refresh_processing,
+    ):
+        bridge.refreshCodeAnalysisReleasesMetadata()
+
+    refresh_catalog.assert_not_called()
+    refresh_jar_sources.assert_called_once()
+    refresh_processing.assert_called_once()
+    assert bridge._apps_catalog_thread is None
+    assert bridge.applicationsCatalogLoading is False
+    assert [item["releaseId"] for item in bridge.codeAnalysisReleaseItems] == ["r1"]
+    assert bridge.codeAnalysisRelease == "r1"
+
+
+def test_legacy_release_refresh_still_refreshes_applications_catalog(bridge):
+    with (
+        patch.object(
+            codeadmin.CodeAdminDomain,
+            "refreshApplicationsCatalog",
+            autospec=True,
+        ) as refresh_catalog,
+        patch.object(
+            codeadmin.CodeAdminDomain,
+            "_refresh_code_analysis_jar_sources",
+            autospec=True,
+        ),
+        patch.object(
+            codeadmin.CodeAdminDomain,
+            "refreshCodeProcessingStatus",
+            autospec=True,
+        ),
+    ):
+        bridge.refreshCodeAnalysisReleases()
+
+    refresh_catalog.assert_called_once()
+    assert bridge._apps_catalog_thread is None
+
+
 def test_refresh_keeps_previous_catalog_and_error_hides_empty(bridge):
     """Previous list stays visible in refresh; error never shows empty state."""
     store = ErpReleaseCatalog(bridge._settings.root).apps_store
@@ -102,6 +175,52 @@ def test_ready_phase_reports_real_version_totals(bridge):
     assert versions_count == 2
     loading = [item for item in phases if item[0] == "loading_versions"]
     assert loading and loading[-1][2] == 2
+
+
+def test_refresh_publishes_index_coverage_progress(bridge, tmp_path):
+    """A refresh over a fresh release drives the determinate catalog bar."""
+    source = tmp_path / "source"
+    _vr_jar(source / "VRApp.jar", (1, 0, 0, 0))
+    _vr_jar(source / "VROther.jar", (1, 0, 0, 0))
+    catalog = ErpReleaseCatalog(bridge._settings.root, expected_jar_count=2)
+    catalog.import_release("one", source)
+    phases = []
+    bridge.applicationsCatalogPhase.connect(
+        lambda phase, current, total: phases.append((phase, current, total))
+    )
+    bridge.refreshApplicationsCatalog()
+    assert bridge.applicationsCatalogLoading is True
+    wait_until(lambda: bridge._apps_catalog_thread is None)
+    QApplication.processEvents()
+    coverage = [item for item in phases if item[0] == "indexing_coverage"]
+    assert coverage, phases
+    assert coverage[0] == ("indexing_coverage", 0, 1)
+    assert coverage[-1][1] == coverage[-1][2] == 1
+    # Once the refresh settles the card state returns to neutral.
+    assert bridge.applicationsCatalogLoading is False
+    assert bridge.applicationsCatalogProgress == 0.0
+    assert bridge.applicationsCatalogProgressTotal == 0
+    assert bridge.applicationsCatalogStatusText == ""
+
+
+def test_catalog_progress_properties_follow_phase_events(bridge):
+    """Phase updates feed the label, percent and indeterminate decision."""
+    bridge._apps_catalog_thread = object()
+    bridge._on_applications_catalog_phase("loading_versions", 3, 9)
+    assert bridge.applicationsCatalogLoading is True
+    assert bridge.applicationsCatalogProgress == 0.0
+    assert bridge.applicationsCatalogProgressTotal == 0
+    assert "3 aplicativo" in bridge.applicationsCatalogStatusText
+
+    bridge._on_applications_catalog_phase("indexing_coverage", 2, 8)
+    assert bridge.applicationsCatalogProgress == 25.0
+    assert bridge.applicationsCatalogProgressTotal == 8
+    assert "2/8" in bridge.applicationsCatalogStatusText
+
+    bridge._apps_catalog_thread = None
+    assert bridge.applicationsCatalogProgress == 0.0
+    assert bridge.applicationsCatalogProgressTotal == 0
+    assert bridge.applicationsCatalogStatusText == ""
 
 
 def test_studio_save_settings_root_change_stays_on_old_root(tmp_path, monkeypatch):
@@ -209,8 +328,7 @@ def test_import_runs_off_qt_thread_and_reports_error(bridge, tmp_path, monkeypat
     assert "injected import failure" in bridge.releaseSnapshotStatus
 
 
-@pytest.mark.parametrize("operation", ["detect", "import", "delete"])
-def test_decompiled_tasks_keep_qt_responsive_and_reject_overlap(bridge, tmp_path, monkeypatch, operation):
+def test_delete_jars_task_keeps_qt_responsive_and_rejects_overlap(bridge, monkeypatch):
     entered, release, heartbeat = (threading.Event() for _ in range(3))
 
     def blocked(*args, **kwargs):
@@ -218,20 +336,15 @@ def test_decompiled_tasks_keep_qt_responsive_and_reject_overlap(bridge, tmp_path
         release.wait(5)
         raise RuntimeError("decompiled failure")
 
-    if operation == "delete":
-        monkeypatch.setattr(ErpReleaseCatalog, "delete_source_jars", blocked)
-    else:
-        monkeypatch.setattr(codeadmin, f"{operation}_decompiled_source", blocked)
+    monkeypatch.setattr(ErpReleaseCatalog, "delete_source_jars", blocked)
     try:
-        result = (bridge.detectDecompiledDirectory(str(tmp_path)) if operation == "detect"
-                  else bridge.deleteSourceJars("one") if operation == "delete"
-                  else bridge.importDecompiledDirectory(str(tmp_path), "one", "One"))
+        result = bridge.deleteSourceJars("one")
         assert result["pending"]
         assert entered.wait(2)
         QTimer.singleShot(0, heartbeat.set)
         wait_until(heartbeat.is_set)
         assert not bridge.unlinkPackage("one", False)
-        assert bridge.importDecompiledDirectory(str(tmp_path))["busy"]
+        assert bridge.deleteSourceJars("one")["error"] == "Aguarde a operação em andamento."
     finally:
         release.set()
     wait_until(lambda: not bridge.releaseSnapshotRunning)

@@ -19,11 +19,11 @@ Item {
         : (root.hubPage ? root.hubPage.sidebarBorderOffset > 0 : ((typeof frontend !== "undefined" && frontend && frontend.currentPage !== 1) && root.window && root.window.width >= 980))
     readonly property real sidebarWidth: isChatPage
         ? (root.chatPage && root.chatPage.conversationSidebarVisible && root.chatPage.width >= 760
-            ? (root.chatPage.sidebarBorderOffset > 0 ? root.chatPage.sidebarBorderOffset : (root.chatPage.sidebarBorderX > 0 ? root.chatPage.sidebarBorderX + 1 : 264))
+            ? (root.chatPage.sidebarBorderOffset > 0 ? root.chatPage.sidebarBorderOffset : (root.chatPage.sidebarBorderX > 0 ? root.chatPage.sidebarBorderX + 1 : Theme.navigationWidth))
             : 0)
         : (root.hubPage && root.hubPage.sidebarBorderOffset > 0
             ? root.hubPage.sidebarBorderOffset
-            : (hasSidebar ? 264 : 0))
+            : (hasSidebar ? Theme.navigationWidth : 0))
     readonly property real surfaceWidth: isChatPage
         ? (root.chatPage && root.chatPage.surfaceVisible && root.chatPage.width >= 1000
             ? (root.chatPage.surfaceBorderOffset > 0 ? root.chatPage.surfaceBorderOffset : root.chatPage.surfacePanelWidth + 4)
@@ -95,8 +95,8 @@ Item {
             id: conversationSidebarToggle
             objectName: "conversationSidebarToggle"
             visible: root.isChatPage && root.chatPage !== null
-            implicitWidth: 32
-            implicitHeight: 32
+            implicitWidth: Theme.iconButtonNormal
+            implicitHeight: Theme.iconButtonNormal
             iconKind: "panelLeft"
             iconSize: Theme.iconSmall
             focusPolicy: Qt.NoFocus
@@ -112,14 +112,16 @@ Item {
         Item {
             width: 16
             height: 16
+            Layout.preferredWidth: 16
+            Layout.preferredHeight: 16
+            Layout.alignment: Qt.AlignVCenter
 
             Rectangle {
                 objectName: "environmentArtwork"
                 anchors.fill: parent
-                radius: 4
                 visible: typeof frontend !== "undefined" && frontend && frontend.environmentStage !== "" && frontend.environmentIdentification === "artwork"
-                color: Qt.alpha(Theme.palette.focus, .2)
-                border.color: Theme.palette.focus
+                color: "transparent"
+                border.width: 0
             }
 
             Image {
@@ -142,47 +144,6 @@ Item {
             font.pixelSize: Theme.controlSize
             font.weight: Font.Bold
             renderType: Theme.textRenderType
-        }
-
-        Rectangle {
-            objectName: "environmentVersionPill"
-            visible: root.width >= Theme.scaledGeometry(600) && typeof frontend !== "undefined" && frontend && frontend.environmentStage !== "" && frontend.environmentIdentification === "pill"
-            implicitWidth: stageLabel.implicitWidth + 8
-            implicitHeight: 20
-            radius: 4
-            color: Theme.palette.accentSoft
-
-            Text {
-                id: stageLabel
-                anchors.centerIn: parent
-                text: (typeof frontend !== "undefined" && frontend ? frontend.appVersion : "v0.6.3") + " " + (typeof frontend !== "undefined" && frontend ? frontend.environmentStage : "Dev")
-                color: Theme.palette.text
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSizeMicro
-                font.weight: Font.Medium
-                renderType: Theme.textRenderType
-            }
-        }
-
-        Rectangle {
-            visible: root.width >= Theme.scaledGeometry(600) && !(typeof frontend !== "undefined" && frontend && frontend.environmentStage !== "" && frontend.environmentIdentification === "pill")
-            implicitWidth: defaultBadge.implicitWidth + 10
-            implicitHeight: 20
-            radius: 10
-            color: Theme.palette.surfaceRaised
-            border.width: 1
-            border.color: Theme.palette.border
-
-            Text {
-                id: defaultBadge
-                anchors.centerIn: parent
-                text: (typeof frontend !== "undefined" && frontend) ? (frontend.appVersion + " Dev") : "v0.6.3 Dev"
-                color: Theme.palette.mutedText
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSizeMicro
-                font.weight: Font.Medium
-                renderType: Theme.textRenderType
-            }
         }
     }
 
@@ -350,8 +311,8 @@ Item {
             id: surfaceExpandButton
             objectName: "surfaceToggleButton"
             visible: root.isChatPage && root.chatPage !== null
-            implicitWidth: 32
-            implicitHeight: 32
+            implicitWidth: Theme.iconButtonNormal
+            implicitHeight: Theme.iconButtonNormal
             iconSize: Theme.iconSmall
             iconKind: "panelRight"
             focusPolicy: Qt.NoFocus

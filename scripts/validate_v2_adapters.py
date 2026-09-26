@@ -27,20 +27,33 @@ try:
     chosen = next((m for m in models if m.get('isDefault')), models[0])
     model = str(chosen.get('model') or chosen.get('id'))
     report['model'] = model
-    cid = orchestrator.new_conversation(args.provider,model,'low',workspace=settings.work_dir,vr_mode='off',approval_profile='readonly')
+    cid = orchestrator.new_conversation(args.provider,model,'low',workspace=settings.work_dir,vr_mode='off',approval_profile='research_readonly')
     done = threading.Event()
     def callback(event):
         if event.kind in {'error','assistant_completed','token_usage','turn_completed'}:
             report['events'].append({'kind':event.kind,'text':event.text,'payload':event.payload})
         if event.kind == 'turn_completed':
             done.set()
-    orchestrator.send(cid,'Responda somente V2_OK. Não use ferramentas.',callback,vr_mode='off')
+    orchestrator.send(cid,'Responda somente V2_OK. Não use ferramentas.',callback,use_vr=False,vr_mode='off')
     if not done.wait(60):
         orchestrator.interrupt(cid)
         raise TimeoutError('Provider smoke exceeded 60 seconds')
     messages = [dict(m) for m in db.messages(cid) if m['role']=='assistant']
     report['responses'] = [m['content'] for m in messages]
-    report['passed'] = any('V2_OK' in m['content'] for m in messages) and not any(e['kind']=='error' for e in report['events'])
+    conv = db.get_conversation(cid)
+    options = orchestrator._conversation_options(cid, use_vr=False)
+    dynamic_tool_names = [tool.get('name') for tool in options.dynamic_tools if isinstance(tool, dict)]
+    report['vr_mode'] = conv['vr_mode']
+    report['vr_enabled'] = bool(conv['vr_enabled'])
+    report['dynamic_tools'] = dynamic_tool_names
+    report['has_vr_tools'] = orchestrator._has_vr_tools(options.dynamic_tools)
+    report['passed'] = (
+        any('V2_OK' in m['content'] for m in messages)
+        and not any(e['kind']=='error' for e in report['events'])
+        and report['vr_mode'] == 'off'
+        and report['vr_enabled'] is False
+        and report['has_vr_tools'] is False
+    )
 except Exception as exc:
     report['error'] = str(exc)
 finally:

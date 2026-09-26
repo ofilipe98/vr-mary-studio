@@ -194,3 +194,71 @@ def test_cleaning_is_idempotent():
     second = _clean(first.body)
     assert second.body == first.body
     assert second.status == "unchanged"
+
+
+def test_crlf_unprotected_whitespace_and_blank_lines_are_normalized():
+    body = (
+        "\r\n"
+        "package br.vr;\r\n"
+        "\r\n"
+        "\r\n"
+        "public class App {   \r\n"
+        "}\r\n"
+        "\r\n"
+    )
+    result = _clean(body)
+    assert result.status == "cleaned"
+    assert result.body == "package br.vr;\n\npublic class App {\n}\n"
+    assert "\r" not in result.body
+    assert result.body.endswith("\n")
+    assert not result.body.endswith("\r\n")
+
+
+def test_crlf_inside_block_comment_is_preserved():
+    body = (
+        "class App {}\r\n"
+        "/* first line  \r\n"
+        "   second line\r\n"
+        "   third line  */\r\n"
+    )
+    result = _clean(body)
+    assert result.status == "cleaned"
+    protected = "/* first line  \r\n   second line\r\n   third line  */"
+    assert protected in result.body
+    assert result.body == "class App {}\n" + protected + "\n"
+
+
+def test_line_banner_stops_before_comment_after_blank_line():
+    body = (
+        "// Decompiled by Vineflower\n"
+        "// generated fixture\n"
+        "\n"
+        "// Copyright VR Software\n"
+        "package br.vr;\n"
+        "\n"
+        "public class App {}\n"
+    )
+    result = _clean(body, tool="vineflower")
+    assert result.status == "cleaned"
+    assert "Decompiled" not in result.body
+    assert "generated fixture" not in result.body
+    assert "// Copyright VR Software" in result.body
+    assert result.body.startswith("// Copyright VR Software")
+    assert "package br.vr;" in result.body
+    assert "public class App {}" in result.body
+
+
+def test_line_banner_accepts_indented_contiguous_comment_lines():
+    body = (
+        "// Decompiled by Vineflower\n"
+        "  \t// fixture build 42\n"
+        "package br.vr;\n"
+        "\n"
+        "public class App {}\n"
+    )
+    result = _clean(body, tool="vineflower")
+    assert result.status == "cleaned"
+    assert "Decompiled" not in result.body
+    assert "fixture build 42" not in result.body
+    assert result.body.startswith("package br.vr;")
+    assert "public class App {}" in result.body

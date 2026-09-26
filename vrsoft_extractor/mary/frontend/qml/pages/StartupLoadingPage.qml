@@ -84,11 +84,14 @@ Rectangle {
             // Progress Bar
             VrProgressBar {
                 id: progressBar
+                objectName: "startupCatalogProgress"
                 Layout.fillWidth: true
-                barHeight: 5
-                indeterminate: typeof bootstrap === "undefined" || !bootstrap || (bootstrap.state !== "ready" && bootstrap.state !== "error")
+                barHeight: Theme.scaledGeometry(6)
+                indeterminate: typeof bootstrap === "undefined" || !bootstrap
+                    || (bootstrap.state !== "ready" && bootstrap.state !== "error")
                 visible: typeof bootstrap === "undefined" || !bootstrap || bootstrap.state !== "error"
                 accentColor: Theme.palette.brandOrange
+                accessibleName: "Carregando ambiente"
             }
 
             // Step status card

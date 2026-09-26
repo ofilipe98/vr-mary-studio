@@ -26,10 +26,16 @@ class FakeClient:
     instances = []
     session_error = False
 
+    SESSION_TIMEOUT = 90.0
+
     def __init__(self, **kwargs):
         self.callbacks = kwargs
         self.calls = []
+        self.request_timeouts = []
         self.closed = False
+        self.block_prompt = getattr(self.__class__, "block_prompt", False)
+        self.prompt_started = threading.Event()
+        self.prompt_unblock = threading.Event()
         self.capabilities = {"sessionCapabilities": {"resume": {}}, "promptCapabilities": {"image": True}}
         self.process = None
         self.instances.append(self)
@@ -37,13 +43,19 @@ class FakeClient:
     def start(self):
         assert not self.closed
 
-    def request(self, method, params, timeout=None):
+    def request(self, method, params, timeout=SESSION_TIMEOUT):
         self.calls.append((method, params))
+        self.request_timeouts.append((method, timeout))
         if method in ("session/new", "session/resume", "session/load"):
             if self.session_error:
                 raise AcpError(method, -32603)
             return SESSION
         if method == "session/prompt":
+            if self.block_prompt:
+                self.prompt_started.set()
+                self.prompt_unblock.wait(5.0)
+                if self.closed:
+                    raise AcpError("session/prompt")
             self.callbacks["on_notification"]("session/update", {"sessionId": "native", "update": {
                 "sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "OK"}}})
             return {"stopReason": "end_turn"}
@@ -100,21 +112,69 @@ def test_catalog_comes_from_acp_session(fake_runtime):
     assert [m for m, _ in FakeClient.instances[0].calls] == ["authenticate", "session/new"]
 
 
-def test_stdio_mcp_is_registered_without_optional_capability_flag(fake_runtime, tmp_path):
+@pytest.mark.parametrize("native", ["", "acp:native"])
+@pytest.mark.parametrize("vr_enabled", [False, True])
+def test_stdio_mcp_is_registered_without_optional_capability_flag(
+    fake_runtime, tmp_path, native, vr_enabled
+):
     from vrsoft_extractor.mary.models import ConversationOptions
     provider = AntigravityProvider(tmp_path)
     done = threading.Event()
-    provider.send_message("conversation", "", "gemini-test", "auto", tmp_path, "Hello",
+    provider.send_message("conversation", native, "gemini-test", "auto", tmp_path, "Hello",
         lambda e: done.set() if e.kind == "turn_completed" else None,
-        ConversationOptions(knowledge_context_path="frozen-turn.json"))
+        ConversationOptions(knowledge_context_path="frozen-turn.json", vr_enabled=vr_enabled))
     assert done.wait(2)
-    params = next(params for method, params in FakeClient.instances[0].calls if method == "session/new")
+    calls = FakeClient.instances[0].calls
+    params = next(
+        params
+        for method, params in calls
+        if method in {"session/new", "session/resume", "session/load"}
+    )
     server = params["mcpServers"][0]
     assert server["env"] == []
-    assert server["args"][-4:] == [
-        "--context", "frozen-turn.json", "--monitor-session", "conversation"
-    ]
+    assert server["args"][server["args"].index("--context") + 1] == "frozen-turn.json"
+    assert server["args"][server["args"].index("--monitor-session") + 1] == "conversation"
+    assert ("--disable-vr-tools" in server["args"]) is not vr_enabled
     assert "additionalDirectories" not in params
+
+
+@pytest.mark.parametrize(
+    "vr_enabled,tools_enabled",
+    [(True, True), (True, False), (False, True)],
+)
+def test_vr_message_explains_workspace_sandbox(
+    fake_runtime, tmp_path, vr_enabled, tools_enabled
+):
+    provider = AntigravityProvider(tmp_path)
+    done = threading.Event()
+    provider.send_message(
+        "conversation",
+        "",
+        "gemini-test",
+        "auto",
+        tmp_path,
+        "Hello",
+        lambda event: done.set() if event.kind == "turn_completed" else None,
+        ConversationOptions(vr_enabled=vr_enabled, tools_enabled=tools_enabled),
+    )
+    assert done.wait(2)
+    params = next(
+        params for method, params in FakeClient.instances[0].calls
+        if method == "session/prompt"
+    )
+    message = "".join(block.get("text", "") for block in params["prompt"])
+    assert "Use as fontes já fornecidas" not in message
+    if vr_enabled and tools_enabled:
+        assert "AMBIENTE ANTIGRAVITY" in message
+        assert "não é legível diretamente" in message
+        for name in ("vr_sources", "vr_search", "vr_read"):
+            assert name in message
+    elif vr_enabled:
+        assert "AMBIENTE ANTIGRAVITY" not in message
+        assert "Se uma ferramenta for recusada" in message
+    else:
+        assert "AMBIENTE ANTIGRAVITY" not in message
+        assert "Se uma ferramenta for recusada" not in message
 
 
 @pytest.mark.parametrize("native", ["", "acp:native"])
@@ -654,6 +714,217 @@ def test_stale_cleanup_failure_does_not_abort_profile_preparation(tmp_path, monk
     ), "the failed reclaim must be reported as a warning"
 
 
+# --- Orphan runtime reclamation, job diagnostics and shutdown hooks ----------
+
+
+def test_remove_acp_temp_dir_warning_reports_os_error(tmp_path, caplog):
+    from vrsoft_extractor.mary import antigravity_acp as acp_module
+    temp_dir = tmp_path / "proc-locked"
+    temp_dir.mkdir()
+
+    with patch("vrsoft_extractor.mary.antigravity_acp.shutil.rmtree",
+               side_effect=PermissionError(13, "Access is denied")), \
+            patch("vrsoft_extractor.mary.antigravity_acp.time.sleep"), \
+            caplog.at_level(logging.WARNING, logger="vrsoft_extractor.mary.antigravity_acp"):
+        assert acp_module._remove_acp_temp_dir(temp_dir) is False
+
+    assert temp_dir.exists()
+    message = next(record.getMessage() for record in caplog.records
+                   if record.name == "vrsoft_extractor.mary.antigravity_acp")
+    assert str(temp_dir) in message
+    assert "Access is denied" in message, "the OS error must explain what blocked the removal"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="orphan termination uses taskkill")
+def test_cleanup_terminates_orphaned_runtime_before_reclaim(tmp_path, monkeypatch, caplog):
+    from vrsoft_extractor.mary import antigravity_acp as acp_module
+    from vrsoft_extractor.mary.execution.ownership import process_identity
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path / "system-tmp"))
+    (tmp_path / "system-tmp").mkdir()
+    profile = tmp_path / "profile"
+    tmp_root = profile / "antigravity-acp" / "tmp"
+    tmp_root.mkdir(parents=True)
+
+    temp_dir, handle = acp_module._create_owned_temp_dir(tmp_root, prefix="proc-")
+    runtime = subprocess.Popen(
+        [sys.executable, "-u", "-c", "import time; time.sleep(120)"],
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    try:
+        acp_module._record_runtime_info(temp_dir, runtime.pid)
+        assert process_identity(runtime.pid), "the recorded runtime must be alive"
+        # The owner died: its lock is gone, but the runtime survived and keeps
+        # the directory (PyInstaller extraction) locked.
+        acp_module._release_temp_lock(handle)
+        handle = None
+
+        with caplog.at_level(logging.WARNING, logger="vrsoft_extractor.mary.antigravity_acp"):
+            removed = acp_module._cleanup_stale_acp_temp_dirs(profile_dir=profile)
+
+        assert removed == 1
+        assert not Path(temp_dir).exists()
+        deadline = time.time() + 10
+        while time.time() < deadline and process_identity(runtime.pid):
+            time.sleep(0.05)
+        assert process_identity(runtime.pid) == "", "the orphaned runtime must be terminated"
+        assert any("órfão" in record.getMessage() for record in caplog.records)
+    finally:
+        if handle is not None:
+            acp_module._release_temp_lock(handle)
+        if runtime.poll() is None:
+            runtime.kill()
+            runtime.wait(timeout=5)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="orphan termination uses taskkill")
+def test_cleanup_never_signals_a_recycled_pid(tmp_path, monkeypatch):
+    from vrsoft_extractor.mary import antigravity_acp as acp_module
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path / "system-tmp"))
+    (tmp_path / "system-tmp").mkdir()
+    profile = tmp_path / "profile"
+    tmp_root = profile / "antigravity-acp" / "tmp"
+    tmp_root.mkdir(parents=True)
+
+    temp_dir, handle = acp_module._create_owned_temp_dir(tmp_root, prefix="proc-")
+    runtime = subprocess.Popen(
+        [sys.executable, "-u", "-c", "import time; time.sleep(120)"],
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    try:
+        # Same PID, but the creation-time identity no longer matches: the PID
+        # must be treated as an unrelated process and never signalled.
+        Path(temp_dir, acp_module.ACP_TEMP_RUNTIME_INFO).write_text(
+            f"{os.getpid()}|{runtime.pid}|0:1\n", encoding="utf-8"
+        )
+        acp_module._release_temp_lock(handle)
+        handle = None
+
+        removed = acp_module._cleanup_stale_acp_temp_dirs(profile_dir=profile)
+
+        assert removed == 1
+        assert not Path(temp_dir).exists()
+        assert runtime.poll() is None, "a mismatching identity must never be killed"
+    finally:
+        if handle is not None:
+            acp_module._release_temp_lock(handle)
+        if runtime.poll() is None:
+            runtime.kill()
+            runtime.wait(timeout=5)
+
+
+def test_start_records_runtime_identity_for_orphan_reclaim(tmp_path, monkeypatch):
+    from vrsoft_extractor.mary import antigravity_acp as acp_module
+    from vrsoft_extractor.mary.execution.ownership import process_identity
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    profile = tmp_path / "profile"
+    script = tmp_path / "acp_fixture.py"
+    script.write_text(
+        'import sys, json, os\n'
+        "for line in sys.stdin:\n"
+        "    request = json.loads(line)\n"
+        "    if request['method'] == 'initialize':\n"
+        "        result = {'protocolVersion': 1, 'agentCapabilities': {},"
+        " 'authMethods': [{'id': 'oauth-personal'}]}\n"
+        "    else:\n"
+        "        result = {'sessionId': 'fixture'}\n"
+        "    frame = (json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'result': result}) + '\\n').encode()\n"
+        "    os.write(sys.stdout.fileno(), frame)\n",
+        encoding="utf-8",
+    )
+    popen = subprocess.Popen
+    def launch(command, **kwargs):
+        return popen([sys.executable, "-u", str(script)], **kwargs)
+
+    client = AcpClient(command="fixture", env={})
+    try:
+        with patch("vrsoft_extractor.mary.antigravity_acp.profile_path", return_value=profile), \
+                patch("vrsoft_extractor.mary.antigravity_acp.subprocess.Popen", side_effect=launch):
+            client.start()
+            owner, pid_text, identity = Path(
+                client._temp_dir, acp_module.ACP_TEMP_RUNTIME_INFO
+            ).read_text(encoding="utf-8").strip().split("|")
+            assert owner == str(os.getpid())
+            assert int(pid_text) == client.process.pid
+            assert identity == process_identity(client.process.pid)
+    finally:
+        client.close()
+
+
+def test_start_registers_atexit_close_and_close_unregisters(tmp_path, monkeypatch):
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    profile = tmp_path / "profile"
+    script = tmp_path / "acp_fixture.py"
+    script.write_text(
+        'import sys, json, os\n'
+        "for line in sys.stdin:\n"
+        "    request = json.loads(line)\n"
+        "    if request['method'] == 'initialize':\n"
+        "        result = {'protocolVersion': 1, 'agentCapabilities': {},"
+        " 'authMethods': [{'id': 'oauth-personal'}]}\n"
+        "    else:\n"
+        "        result = {'sessionId': 'fixture'}\n"
+        "    frame = (json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'result': result}) + '\\n').encode()\n"
+        "    os.write(sys.stdout.fileno(), frame)\n",
+        encoding="utf-8",
+    )
+    popen = subprocess.Popen
+    def launch(command, **kwargs):
+        return popen([sys.executable, "-u", str(script)], **kwargs)
+
+    client = AcpClient(command="fixture", env={})
+    with patch("vrsoft_extractor.mary.antigravity_acp.profile_path", return_value=profile), \
+            patch("vrsoft_extractor.mary.antigravity_acp.subprocess.Popen", side_effect=launch), \
+            patch("vrsoft_extractor.mary.antigravity_acp.atexit") as atexit_mock:
+        client.start()
+        atexit_mock.register.assert_called_once()
+        registered = atexit_mock.register.call_args.args[0]
+        assert registered == client._close_at_exit
+        client.close()
+        atexit_mock.unregister.assert_called_once_with(registered)
+    assert client._atexit_registered is False
+
+
+@pytest.mark.skipif(os.name != "nt", reason="kill-on-close job objects are Windows-only")
+def test_job_creation_failure_is_logged(caplog):
+    import ctypes
+
+    from vrsoft_extractor.mary import antigravity_acp as acp_module
+    failing = MagicMock()
+    failing.CreateJobObjectW.return_value = 0
+
+    with patch.object(acp_module, "_win32_job_api", return_value=(ctypes, None, failing)), \
+            caplog.at_level(logging.WARNING, logger="vrsoft_extractor.mary.antigravity_acp"):
+        assert acp_module._create_kill_on_close_job() is None
+
+    assert any("CreateJobObjectW" in record.getMessage() for record in caplog.records), \
+        "a missing kill-on-close job must never fail silently"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="kill-on-close job objects are Windows-only")
+def test_job_assignment_failure_is_logged(caplog):
+    import ctypes
+    from ctypes import wintypes
+
+    from vrsoft_extractor.mary import antigravity_acp as acp_module
+    failing = MagicMock()
+    failing.AssignProcessToJobObject.return_value = 0
+    runtime = subprocess.Popen(
+        [sys.executable, "-u", "-c", "import time; time.sleep(120)"],
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    try:
+        with patch.object(acp_module, "_win32_job_api", return_value=(ctypes, wintypes, failing)), \
+                caplog.at_level(logging.WARNING, logger="vrsoft_extractor.mary.antigravity_acp"):
+            assert acp_module._assign_process_to_job(object(), runtime) is False
+
+        assert any("kill-on-close" in record.getMessage() for record in caplog.records), \
+            "a refused assignment must never fail silently"
+    finally:
+        if runtime.poll() is None:
+            runtime.kill()
+            runtime.wait(timeout=5)
+
+
 # --- Discovery: %LOCALAPPDATA%/agy/bin/acp/<version>/ layout ---------------
 
 EXE_NAME = "agy_acp_server.exe" if os.name == "nt" else "agy_acp_server"
@@ -985,3 +1256,54 @@ def test_acp_client_ignores_non_oauth_url_when_unattended():
     client._fail_pending.assert_called_once()
     err = client._fail_pending.call_args[0][0]
     assert err.code == -32000
+
+
+@pytest.mark.parametrize("vr_mode,vr_enabled", [
+    ("off", False),
+    ("vr", True),
+    ("ultra", True),
+])
+def test_antigravity_prompt_timeout_is_none_in_all_modes(fake_runtime, tmp_path, vr_mode, vr_enabled):
+    provider = AntigravityProvider()
+    done, events = threading.Event(), []
+    def receive(event):
+        events.append(event)
+        if event.kind == "turn_completed":
+            done.set()
+    opts = ConversationOptions(vr_mode=vr_mode, vr_enabled=vr_enabled)
+    provider.send_message("conv-timeout", "", "gemini-test", "auto", tmp_path, "Pergunta", receive, options=opts)
+    assert done.wait(2)
+    client = FakeClient.instances[0]
+    prompt_timeouts = [t for m, t in client.request_timeouts if m == "session/prompt"]
+    assert len(prompt_timeouts) == 1
+    assert prompt_timeouts[0] is None
+    # Technical session calls keep their default timeout (90.0)
+    tech_timeouts = [t for m, t in client.request_timeouts if m in ("authenticate", "session/new", "session/resume")]
+    assert all(t == 90.0 for t in tech_timeouts)
+
+
+def test_antigravity_cancellation_during_prompt_with_none_timeout(fake_runtime, tmp_path):
+    provider = AntigravityProvider()
+    done, events = threading.Event(), []
+    def receive(event):
+        events.append(event)
+        if event.kind == "turn_completed":
+            done.set()
+    # Set FakeClient to block on prompt
+    FakeClient.block_prompt = True
+    try:
+        provider.send_message("conv-cancel", "", "gemini-test", "auto", tmp_path, "Bloqueado", receive,
+                              options=ConversationOptions(vr_mode="off", vr_enabled=False))
+        # Wait until prompt is entered
+        client = FakeClient.instances[-1]
+        assert client.prompt_started.wait(2.0)
+        # Cancel conversation while prompt is waiting without deadline
+        provider.interrupt("conv-cancel")
+        client.prompt_unblock.set()
+        assert done.wait(2.0)
+        assert client.closed
+        completed = next(e for e in events if e.kind == "turn_completed")
+        assert completed.payload.get("cancelled") is True
+        assert not any(e.kind == "error" for e in events)
+    finally:
+        FakeClient.block_prompt = False

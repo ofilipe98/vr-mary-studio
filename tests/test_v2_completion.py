@@ -1,4 +1,5 @@
 """Independent integration and crash-boundary tests for the completed V2 paths."""
+import json
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -29,6 +30,7 @@ os._exit(17)
     assert result.returncode == 17
     repo = ResearchRepository(path)
     assert repo.get_run('crashed')['status'] == 'interrupted'
+    assert json.loads(repo.get_run('crashed')['budget_json'])['unlimited'] is True
     assert repo.find_reusable_step('hash', run_id='crashed')['output'] == {'raw':'done'}
     unknown = next(s for s in repo.get_steps_for_run('crashed') if s['stage_id']=='unknown')
     assert unknown['status']=='interrupted' and 'desconhecida' in unknown['error']

@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import json
 import threading
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from vrsoft_extractor.mary.config import MarySettings
 from vrsoft_extractor.mary.db import MaryDatabase
+from vrsoft_extractor.mary.execution import ExecutionBudget
 from vrsoft_extractor.mary.models import (
+    ConversationOptions,
+    EvidenceBundle,
+    EvidenceCandidate,
     KnowledgeDocument,
     ModelRef,
     RuntimeEvent,
@@ -83,6 +88,7 @@ class _UltraFakeProvider:
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.calls: list[str] = []
+        self.messages: list[tuple[str, str]] = []
         self.active: set[str] = set()
         self.parallel_peak = 0
 
@@ -108,6 +114,7 @@ class _UltraFakeProvider:
                      message, callback, options=None, skills=None, image_paths=None):
         with self.lock:
             self.calls.append(conversation_id)
+            self.messages.append((conversation_id, message))
         output = SYNTHESIS
         if ":vr_fanout_" not in conversation_id and not any(
             marker in message for marker in ("sintetizador final", "Reescreva integralmente")
@@ -220,6 +227,124 @@ def test_ultra_mode_triggers_fanout(tmp_path: Path) -> None:
     assert "agent_usage" in persisted_kinds
 
 
+def test_ultra_without_fanout_keeps_direct_vr_sources_fallback(
+    tmp_path: Path, monkeypatch
+) -> None:
+    settings, database, orchestrator, provider, cid, events = _orchestrator(
+        tmp_path, "ultra"
+    )
+    orchestrator.settings = replace(
+        orchestrator.settings, vr_research_fanout=False
+    )
+    calls: list[str] = []
+    original = orchestrator.retrieval_service.route_vr_sources
+
+    def spy(query, **kwargs):
+        calls.append(query)
+        return original(query, **kwargs)
+
+    monkeypatch.setattr(
+        orchestrator.retrieval_service, "route_vr_sources", spy
+    )
+
+    _run_send(orchestrator, cid, events)
+
+    kinds = [e.kind for e in events]
+    assert calls == [QUESTION]
+    assert "research_started" not in kinds
+    assert not any(
+        kind in {"agent_started", "agent_completed", "agent_failed"}
+        for kind in kinds
+    )
+    routed = [event for event in events if event.kind == "knowledge_routed"]
+    assert routed
+    assert routed[0].payload["selected_evidence"]
+    assert "knowledge_fallback_used" not in kinds
+    row = [r for r in database.messages(cid) if r["role"] == "assistant"]
+    assert row and "Resposta Ultra" in row[-1]["content"]
+
+
+def test_ultra_without_fanout_degrades_empty_bundle(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _settings_value, database, orchestrator, _provider, cid, events = _orchestrator(
+        tmp_path, "ultra"
+    )
+    orchestrator.settings = replace(
+        orchestrator.settings, vr_research_fanout=False
+    )
+
+    def empty_bundle(query, **_kwargs):
+        return EvidenceBundle(
+            profile=orchestrator.retrieval_service.classify(query)
+        )
+
+    monkeypatch.setattr(
+        orchestrator.retrieval_service, "route_vr_sources", empty_bundle
+    )
+
+    _run_send(orchestrator, cid, events)
+
+    kinds = [event.kind for event in events]
+    fallback = next(
+        event for event in events if event.kind == "knowledge_fallback_used"
+    )
+    assert fallback.payload["router_failed"] is False
+    assert fallback.payload["query"] == QUESTION
+    contract = next(
+        event for event in events if event.kind == "response_contract_created"
+    )
+    assert contract.payload["contract"]["requires_sources"] is False
+    assert contract.payload["contract"]["sources_position"] == "none"
+    plan = next(
+        event for event in events if event.kind == "response_plan_created"
+    )
+    assert "Fontes completas indisponíveis — busca simplificada aplicada." in plan.payload[
+        "steps"
+    ]
+    assert "knowledge_fallback_used" in kinds
+    assert "knowledge_routed" in kinds
+
+
+def test_ultra_without_fanout_degrades_when_router_raises(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _settings_value, database, orchestrator, _provider, cid, events = _orchestrator(
+        tmp_path, "ultra"
+    )
+    orchestrator.settings = replace(
+        orchestrator.settings, vr_research_fanout=False
+    )
+
+    def broken_router(*_args, **_kwargs):
+        raise RuntimeError("router indisponível")
+
+    monkeypatch.setattr(
+        orchestrator.retrieval_service, "route_vr_sources", broken_router
+    )
+
+    _run_send(orchestrator, cid, events)
+
+    kinds = [event.kind for event in events]
+    fallback = next(
+        event for event in events if event.kind == "knowledge_fallback_used"
+    )
+    assert fallback.payload["router_failed"] is True
+    assert fallback.payload["query"] == QUESTION
+    contract = next(
+        event for event in events if event.kind == "response_contract_created"
+    )
+    assert contract.payload["contract"]["requires_sources"] is False
+    assert contract.payload["contract"]["sources_position"] == "none"
+    plan = next(
+        event for event in events if event.kind == "response_plan_created"
+    )
+    assert "Fontes completas indisponíveis — busca simplificada aplicada." in plan.payload[
+        "steps"
+    ]
+    assert "knowledge_routed" not in kinds
+
+
 def test_code_scope_prefers_original_business_term_over_follow_up_wording() -> None:
     scope = (
         "Quero que monte um fluxo completo de crossdocking no VRMaster.\n"
@@ -249,6 +374,91 @@ def test_explicit_response_mode_is_applied_before_contract_and_fanout(tmp_path: 
     assert intent_event.payload["intent"]["purpose"] == "implementation"
     assert contract_event.payload["contract"]["purpose"] == "implementation"
     assert "mapeamento de dados" in contract_event.payload["contract"]["must_include"]
+
+
+def test_adaptive_reaches_ultra_fanout_without_changing_graph_or_scope(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from vrsoft_extractor.mary.execution.runner import ExecutionRunner
+
+    _settings, _database, orchestrator, _provider, cid, events = _orchestrator(
+        tmp_path, "ultra"
+    )
+    captured: dict[str, Any] = {}
+    original = ExecutionRunner.execute_ultra_source_fanout
+
+    def spy(self, **kwargs):
+        captured["request"] = str(kwargs.get("request") or "")
+        captured["search_scope"] = str(kwargs.get("search_scope") or "")
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(ExecutionRunner, "execute_ultra_source_fanout", spy)
+
+    _run_send(orchestrator, cid, events, response_mode="adaptive")
+
+    request = captured["request"]
+    header = "PERFIL ESPECIALISTA ATIVO — ADAPTATIVA:"
+    assert header in request
+    assert "Atue como especialista funcional e técnico adaptativo" in request
+    assert "worker permanece restrito à lane atribuída" in request
+    assert request.index(header) < request.index(QUESTION)
+    assert captured["search_scope"] == QUESTION
+    assert header not in captured["search_scope"]
+    research = next(event for event in events if event.kind == "research_started")
+    assert research.payload["sources"] == ["wiki", "kb", "schema"]
+    plan = next(event for event in events if event.kind == "plan_created")
+    stages = {stage["id"]: stage for stage in plan.payload["runtime_stages"]}
+    assert set(stages) == {
+        "ultra_wiki",
+        "ultra_kb",
+        "ultra_schema",
+        "ultra_synthesis",
+    }
+    assert {stage["source"] for stage in stages.values() if not stage["final"]} == {
+        "wiki",
+        "kb",
+        "schema",
+    }
+    started = {
+        event.payload["agent_id"]
+        for event in events
+        if event.kind == "agent_started"
+    }
+    assert {"ultra_wiki", "ultra_kb", "ultra_schema"} <= started
+    assert all(
+        event.payload.get("parent_id") == "vr_ultra_fanout"
+        for event in events
+        if event.kind in {"agent_started", "agent_completed", "agent_failed"}
+    )
+
+
+def test_ultra_adaptive_without_fanout_keeps_direct_fallback(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _settings, _database, orchestrator, provider, cid, events = _orchestrator(
+        tmp_path, "ultra"
+    )
+    orchestrator.settings = replace(
+        orchestrator.settings, vr_research_fanout=False
+    )
+    calls: list[str] = []
+    original = orchestrator.retrieval_service.route_vr_sources
+
+    def spy(query, **kwargs):
+        calls.append(query)
+        return original(query, **kwargs)
+
+    monkeypatch.setattr(
+        orchestrator.retrieval_service, "route_vr_sources", spy
+    )
+
+    _run_send(orchestrator, cid, events, response_mode="adaptive")
+
+    assert calls == [QUESTION]
+    assert not any(event.kind == "research_started" for event in events)
+    main_prompt = next(message for cid_, message in provider.messages if cid_ == cid)
+    assert "PERFIL ESPECIALISTA ATIVO — ADAPTATIVA:" in main_prompt
+    assert "Atue como especialista funcional e técnico adaptativo" in main_prompt
 
 
 def test_vr_mode_never_triggers_fanout(tmp_path: Path) -> None:
@@ -433,6 +643,166 @@ def test_code_agent_rejects_stale_frozen_release_and_fanout_continues(
     assert any(event.kind == "turn_completed" for event in events)
 
 
+def test_researcher_prompt_has_no_document_budget() -> None:
+    from vrsoft_extractor.mary.research_fanout import build_source_researcher_prompt
+
+    prompt = build_source_researcher_prompt("wiki", "pergunta", "evidências")
+    assert "quantas evidências relevantes" in prompt
+    assert "budget" not in prompt.casefold()
+    assert "até 6 documentos" not in prompt.casefold()
+    assert "quantidade máxima" not in prompt.casefold()
+
+
+def test_ultra_telemetry_survives_old_call_and_time_thresholds() -> None:
+    now = [0.0]
+    budget = ExecutionBudget(clock=lambda: now[0])
+    for _ in range(40):
+        budget.acquire_call()
+        budget.release_call()
+    now[0] = 400.0
+    budget.acquire_call()
+    assert budget.calls_made == 41
+    assert budget.remaining_calls() is None
+    assert budget.time_remaining() is None
+    assert budget.has_synthesis_capacity() is True
+
+
+def test_buffered_synthesis_default_waits_for_provider_completion(
+    tmp_path: Path, monkeypatch
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = _UltraFakeProvider()
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_mode="ultra"
+    )
+    orchestrator._pending_user_messages[conversation_id] = 1
+    clock = [0.0]
+    monkeypatch.setattr(
+        "vrsoft_extractor.mary.orchestrator.time.monotonic", lambda: clock[0]
+    )
+
+    def send_message(*args, **kwargs):
+        clock[0] = 400.0
+        callback = args[6]
+        callback(RuntimeEvent(conversation_id, "turn_started"))
+        callback(RuntimeEvent(conversation_id, "assistant_delta", "resposta"))
+        callback(RuntimeEvent(conversation_id, "turn_completed"))
+
+    provider.send_message = send_message
+    result = orchestrator._run_buffered_main_turn(
+        conversation_id,
+        "native",
+        provider,
+        "sol",
+        "medium",
+        settings.work_dir,
+        "prompt",
+        ConversationOptions(vr_mode="ultra"),
+        [],
+    )
+    assert result[0] == "resposta"
+    assert provider.calls == []
+    orchestrator.close()
+
+
+def test_research_registry_keeps_more_than_forty_eight_evidence_candidates(
+    tmp_path: Path,
+) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    orchestrator = ChatOrchestrator(settings, database)
+    conversation_id = orchestrator.new_conversation(
+        "codex", "sol", defer_provider_start=True, vr_mode="ultra"
+    )
+    run_id = "run-evidence-volume"
+    source_path = settings.root / "evidence.txt"
+    source_path.write_text("\n".join("x" * 2000 for _ in range(60)), encoding="utf-8")
+    seed = EvidenceCandidate(
+        evidence_id="wiki:evidence-seed",
+        source="wiki",
+        source_id="evidence-seed",
+        document_id=1,
+        chunk_id=1,
+        title="Evidence",
+        heading="",
+        content_type="text",
+        module="Fiscal",
+        product="",
+        excerpt="",
+        url="",
+        local_path="evidence.txt",
+    )
+    orchestrator._research_evidence[run_id] = {seed.evidence_id: seed}
+    orchestrator._pending_user_messages[conversation_id] = 1
+
+    class Provider:
+        def available(self):
+            return True
+
+        def start_conversation(self, *args, **kwargs):
+            return "native-agent"
+
+        def send_message(self, *args, **kwargs):
+            callback = args[6]
+            for index in range(60):
+                callback(
+                    RuntimeEvent(
+                        args[0],
+                        "tool_event",
+                        "read",
+                        {
+                            "part": {
+                                "tool": "read",
+                                "state": {
+                                    "status": "completed",
+                                    "input": {
+                                        "filePath": str(source_path),
+                                        "offset": index + 1,
+                                        "limit": 1,
+                                    },
+                                },
+                            }
+                        },
+                    )
+                )
+            callback(RuntimeEvent(args[0], "assistant_delta", "ok"))
+            callback(RuntimeEvent(args[0], "turn_completed"))
+
+        def release_conversation(self, *args, **kwargs):
+            return None
+
+        def interrupt(self, *args, **kwargs):
+            return None
+
+        def close(self):
+            return None
+
+    orchestrator.providers = {"codex": Provider()}
+    try:
+        output = orchestrator._run_ephemeral_turn(
+            conversation_id,
+            run_id,
+            "evidence-reader",
+            ModelRef("codex", "sol"),
+            "read",
+            settings.work_dir,
+            "medium",
+            timeout_seconds=None,
+        )
+        assert output == "ok"
+        reads = [
+            candidate
+            for candidate in orchestrator._research_evidence[run_id].values()
+            if candidate.evidence_id.startswith("read:")
+        ]
+        assert len(reads) == 60
+        assert sum(len(candidate.excerpt) for candidate in reads) > 96_000
+    finally:
+        orchestrator.close()
+
+
 def test_code_agent_failure_degrades_without_stopping_synthesis(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -524,5 +894,65 @@ def test_contract_parity_and_deferred_ultra_source_routing(tmp_path: Path) -> No
     vr = payloads_by_mode["vr"]
     ultra = payloads_by_mode["ultra"]
     assert vr["response_contract_created"] == ultra["response_contract_created"]
-    assert "knowledge_routed" in vr
+    # Normal VR starts tool-driven: no automatic routing event in either mode.
+    assert "knowledge_routed" not in vr
     assert "knowledge_routed" not in ultra
+
+
+def test_ultra_fanout_executes_source_pipeline_once(tmp_path: Path, monkeypatch) -> None:
+    from vrsoft_extractor.mary.execution.runner import ExecutionRunner
+
+    settings, database, orchestrator, provider, cid, events = _orchestrator(
+        tmp_path, "ultra"
+    )
+    calls: list[str] = []
+    original = ExecutionRunner.execute_ultra_source_fanout
+
+    def spy(self, **kwargs):
+        calls.append(str(kwargs.get("search_scope") or ""))
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(ExecutionRunner, "execute_ultra_source_fanout", spy)
+
+    _run_send(orchestrator, cid, events)
+
+    assert len(calls) == 1, "Ultra com fan-out ativo deve executar o pipeline por fonte"
+    assert any(event.kind == "research_completed" for event in events)
+
+
+def test_vr_and_ultra_external_workspace_excludes_off_policy(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = MaryDatabase(settings.database_path, root=settings.root)
+    _seed_modules(database)
+    orchestrator = ChatOrchestrator(settings, database)
+    provider = _UltraFakeProvider()
+    orchestrator.providers = {"codex": provider}
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "INSTRUCTIONS.md").write_text("Instrucoes do projeto", encoding="utf-8")
+    (project / "dados.csv").write_text("1,2,3", encoding="utf-8")
+
+    cid = orchestrator.new_conversation(
+        "codex", "sol", workspace=str(project), defer_provider_start=True
+    )
+    events: list[RuntimeEvent] = []
+    done = threading.Event()
+
+    def callback(event: RuntimeEvent) -> None:
+        events.append(event)
+        if event.kind in {"turn_completed", "turn_failed"}:
+            done.set()
+
+    orchestrator.send(
+        cid,
+        "como emitir NF no Fiscal E fechar o caixa no PDV",
+        callback,
+        use_vr=True,
+        vr_mode="ultra",
+    )
+    assert done.wait(30), "turno não concluiu"
+    assert provider.messages, "nenhuma mensagem enviada ao provedor"
+    assert any("Instrucoes do projeto" in msg for _cid, msg in provider.messages)
+    for _cid, msg in provider.messages:
+        assert "FONTES LOCAIS OPCIONAIS — SOMENTE LEITURA:" not in msg

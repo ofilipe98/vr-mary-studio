@@ -33,8 +33,16 @@ def test_centered_landing_project_picker_and_image_paste(tmp_path):
             assert 0 < card.y() < window.height() * .7
             assert abs(card.x() + card.width()/2 - landing.x() - landing.width()/2) < 1
             assert abs(card.y() - landing.y() - landing.height() - 24) < 1
+            title_bar = window.findChild(QObject, 'vrTitleBar')
+            canvas_center = (window.height() - title_bar.height()) / 2
+            assert abs(card.y() + card.height()/2 - canvas_center) < 2
             button = window.findChild(QObject, 'landingProjectButton')
-            assert button.property('text') == 'Como posso ajudar no seu projeto?'
+            assert button.property('text') == 'Como posso ajudar no projeto VRProject?'
+            heading = window.findChild(QObject, 'landingHeadingText')
+            link = window.findChild(QObject, 'landingProjectLink')
+            assert heading is not None and link is not None
+            assert heading.property('lineHeight') == link.property('lineHeight')
+            assert abs(button.y() - heading.y()) < 1
             button.click()
             QTest.qWait(100)
             menu = window.findChild(QObject, 'landingProjectMenu')
