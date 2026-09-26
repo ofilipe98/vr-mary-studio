@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vrsoft-video-extractor"
-version = "0.6.7-5"
+version = "0.6.7-6"
 description = "VR Norte Studio: knowledge sync, local agent chat and VRSoft video extraction."
 readme = "README.md"
 requires-python = ">=3.10"

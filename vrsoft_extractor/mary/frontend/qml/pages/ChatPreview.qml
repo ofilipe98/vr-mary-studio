@@ -2653,54 +2653,107 @@ Item {
         id: composerAssistPopup
         parent: composerCard
         x: 0
-        y: -height - 8
+        y: -height - Theme.scaledGeometry(8)
         width: composerCard.width
-        height: Math.min(250, assistList.contentHeight + 12)
-        padding: Theme.scaledGeometry(6)
+        height: Math.min(Theme.scaledGeometry(270), assistList.contentHeight + Theme.scaledGeometry(10))
+        padding: Theme.scaledGeometry(5)
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        background: Rectangle { color: Theme.palette.chatComposer; border.width: 1; border.color: Theme.palette.chatBorder; radius: Theme.scaledGeometry(12) }
+        background: Rectangle {
+            color: Theme.palette.chatComposer
+            border.width: 1
+            border.color: Theme.palette.chatBorder
+            radius: Theme.scaledGeometry(12)
+        }
         contentItem: ListView {
             id: assistList
             clip: true
-            spacing: 2
+            spacing: Theme.scaledGeometry(2)
             model: root.composerSuggestions
             currentIndex: root.composerAssistIndex
             highlightMoveDuration: 0
+            boundsBehavior: Flickable.StopAtBounds
             delegate: Rectangle {
                 id: assistItem
                 required property int index
                 required property var modelData
                 width: assistList.width
-                height: Theme.scaledGeometry(44)
-                radius: Theme.scaledGeometry(7)
-                color: (assistItem.index === root.composerAssistIndex || assistHover.hovered) ? Theme.palette.chatControl : "transparent"
+                height: Theme.scaledGeometry(34)
+                radius: Theme.scaledGeometry(6)
+                color: (assistItem.index === root.composerAssistIndex)
+                    ? Theme.palette.chatControl
+                    : (assistHover.hovered ? Qt.alpha(Theme.palette.chatControl, 0.5) : "transparent")
+
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: Theme.scaledGeometry(9)
-                    anchors.rightMargin: Theme.scaledGeometry(9)
-                    Text {
-                        Layout.preferredWidth: Theme.scaledGeometry(140)
-                        text: assistItem.modelData.label
-                        color: assistItem.modelData.action === "skill" ? Theme.palette.brandOrange : Theme.palette.text
-                        font.family: Theme.fontFamily
-                        font.pixelSize: Theme.fontSize(12)
-                        font.weight: Font.DemiBold
-                        elide: Text.ElideRight
+                    anchors.leftMargin: Theme.scaledGeometry(10)
+                    anchors.rightMargin: Theme.scaledGeometry(10)
+                    spacing: Theme.scaledGeometry(10)
+
+                    RowLayout {
+                        spacing: 0
+                        Text {
+                            visible: !!assistItem.modelData.prefix
+                            text: assistItem.modelData.prefix || ""
+                            color: Theme.palette.mutedText
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSize(13)
+                            font.weight: Font.Normal
+                            renderType: Theme.textRenderType
+                        }
+                        Text {
+                            text: assistItem.modelData.mainLabel || assistItem.modelData.label
+                            color: Theme.palette.text
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSize(13)
+                            font.weight: Font.DemiBold
+                            renderType: Theme.textRenderType
+                        }
                     }
+
                     Text {
+                        id: descText
                         Layout.fillWidth: true
+                        Layout.minimumWidth: 0
                         text: assistItem.modelData.description || ""
                         color: Theme.palette.mutedText
                         font.family: Theme.fontFamily
                         font.pixelSize: Theme.fontSizeCaption
+                        font.weight: Font.Normal
                         elide: Text.ElideRight
+                        renderType: Theme.textRenderType
+                    }
+
+                    RowLayout {
+                        visible: !!assistItem.modelData.badge
+                        spacing: Theme.scaledGeometry(5)
+                        Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+
+                        VrLineIcon {
+                            kind: "cube"
+                            foreground: Theme.palette.mutedText
+                            strokeWidth: 1.8
+                            implicitWidth: Theme.scaledGeometry(14)
+                            implicitHeight: Theme.scaledGeometry(14)
+                        }
+
+                        Text {
+                            text: assistItem.modelData.badge || ""
+                            color: Theme.palette.text
+                            font.family: Theme.fontFamily
+                            font.pixelSize: Theme.fontSize(12)
+                            font.weight: Font.DemiBold
+                            renderType: Theme.textRenderType
+                        }
                     }
                 }
+
                 HoverHandler {
                     id: assistHover
                     onHoveredChanged: if (hovered) root.composerAssistIndex = assistItem.index
                 }
-                TapHandler { onTapped: root.chooseComposerSuggestion(assistItem.modelData) }
+                TapHandler {
+                    onTapped: root.chooseComposerSuggestion(assistItem.modelData)
+                }
             }
         }
     }
@@ -3789,28 +3842,43 @@ Item {
         var value = composerInput.text
         var trimmed = value.trim()
         var commands = [
-            {label:"/model",description:"Escolher modelo e provedor",action:"model"},
-            ...(root.chatBridge.supportsReasoning ? [{label:"/effort",description:"Definir esforço de raciocínio",action:"effort"}] : []),
-            {label:"/permissions",description:"Definir perfil de aprovação",action:"permissions"},
-            {label:"/skills",description:"Gerenciar skills disponíveis",action:"skills"},
-            {label:"/usage-limits",description:"Ver limites de uso e quotas do provedor",action:"usage-limits"},
-            {label:"/tools",description:"Ver tools e MCP",action:"tools"},
-            {label:"/vr",description:"Alternar Off / VR / VR Ultra",action:"vr"}
+            {label:"/model",mainLabel:"/model",description:"Switch response model for this thread",action:"model"},
+            {label:"/init",mainLabel:"/init",description:"guided AGENTS.md setup",action:"prompt"},
+            {label:"/review",mainLabel:"/review",description:"review changes [commit|branch|pr], defaults to uncommitted",action:"prompt"},
+            {label:"/usage-limits",mainLabel:"/usage-limits",description:"Show this provider's usage limits",action:"usage-limits"},
+            ...(root.chatBridge.supportsReasoning ? [{label:"/effort",mainLabel:"/effort",description:"Definir esforço de raciocínio",action:"effort"}] : []),
+            {label:"/permissions",mainLabel:"/permissions",description:"Definir perfil de aprovação",action:"permissions"},
+            {label:"/skills",mainLabel:"/skills",description:"Gerenciar skills disponíveis",action:"skills"},
+            {label:"/tools",mainLabel:"/tools",description:"Ver tools e MCP",action:"tools"},
+            {label:"/vr",mainLabel:"/vr",description:"Alternar Off / VR / VR Ultra",action:"vr"}
         ]
         if (trimmed.length && trimmed[0] === "/" && trimmed.indexOf(" ") < 0) {
             var needle = trimmed.substring(1).toLowerCase()
+            var skillQuery = needle
+            if (skillQuery.startsWith("skill:")) {
+                skillQuery = skillQuery.substring(6).trim()
+            } else if (skillQuery.startsWith("skill")) {
+                skillQuery = skillQuery.substring(5).trim()
+            }
             var matches = commands.filter(function(item) {
                 return item.label.substring(1).toLowerCase().indexOf(needle) >= 0
             })
             if (root.chatBridge.showSkillsInSlashMenu) {
-                var skills = root.chatBridge.skillSuggestions(needle)
+                var skills = root.chatBridge.skillSuggestions(skillQuery)
                 for (var i = 0; i < skills.length; i++) {
                     var s = skills[i]
+                    var skillDisplayName = s.displayName || s.name
+                    var badgeLabel = (s.source === "provider_native" || s.scope === "provider")
+                        ? "Provider"
+                        : (s.scope ? (s.scope.charAt(0).toUpperCase() + s.scope.slice(1)) : "Provider")
                     matches.push({
-                        label: "/" + s.name,
+                        label: "/skill:" + skillDisplayName,
+                        prefix: "/skill:",
+                        mainLabel: skillDisplayName,
                         description: s.shortDescription || s.description || "Skill",
                         action: "skill",
                         skill: s,
+                        badge: badgeLabel,
                         start: 0
                     })
                 }
@@ -3830,11 +3898,18 @@ Item {
             if (querySkill.indexOf(" ") < 0 && querySkill.indexOf("\n") < 0) {
                 var skillsFound = root.chatBridge.skillSuggestions(querySkill)
                 composerSuggestions = skillsFound.map(function(item) {
+                    var skillDisplayName = item.displayName || item.name
+                    var badgeLabel = (item.source === "provider_native" || item.scope === "provider")
+                        ? "Provider"
+                        : (item.scope ? (item.scope.charAt(0).toUpperCase() + item.scope.slice(1)) : "Provider")
                     return {
-                        label: "$" + item.name,
+                        label: "$" + skillDisplayName,
+                        prefix: "$",
+                        mainLabel: skillDisplayName,
                         description: item.shortDescription || item.description || "Skill",
                         action: "skill",
                         skill: item,
+                        badge: badgeLabel,
                         start: dollar
                     }
                 })
@@ -3853,7 +3928,14 @@ Item {
             if (query.indexOf(" ") < 0 && query.indexOf("\n") < 0) {
                 var files = root.chatBridge.fileSuggestions(query)
                 composerSuggestions = files.map(function(item) {
-                    return {label:item.label,description:"Arquivo do projeto",action:"reference",path:item.path,start:at}
+                    return {
+                        label: item.label,
+                        mainLabel: item.label,
+                        description: "Arquivo do projeto",
+                        action: "reference",
+                        path: item.path,
+                        start: at
+                    }
                 })
                 if (composerSuggestions.length) {
                     root.composerAssistIndex = 0
@@ -3883,11 +3965,31 @@ Item {
             composerInput.cursorPosition = composerInput.length
             composerInput.forceActiveFocus()
         }
-        else if (item.action === "model") modelSelector.openPicker()
-        else if (item.action === "effort" && root.chatBridge.supportsReasoning) effortSelector.openPicker()
-        else if (item.action === "permissions") approvalSelector.openPicker()
-        else if (item.action === "vr") root.chatBridge.cycleVrMode()
-        else if (item.action === "skills" || item.action === "tools") extensionsDialog.open()
+        else if (item.action === "model") {
+            composerInput.clear()
+            modelSelector.openPicker()
+        }
+        else if (item.action === "effort" && root.chatBridge.supportsReasoning) {
+            composerInput.clear()
+            effortSelector.openPicker()
+        }
+        else if (item.action === "permissions") {
+            composerInput.clear()
+            approvalSelector.openPicker()
+        }
+        else if (item.action === "vr") {
+            composerInput.clear()
+            root.chatBridge.cycleVrMode()
+        }
+        else if (item.action === "skills" || item.action === "tools") {
+            composerInput.clear()
+            extensionsDialog.open()
+        }
+        else if (item.action === "prompt") {
+            composerInput.text = item.label + " "
+            composerInput.cursorPosition = composerInput.length
+            composerInput.forceActiveFocus()
+        }
         else if (item.action === "reference") {
             var before = composerInput.text.substring(0, item.start)
             composerInput.text = before + "@\"" + item.path + "\" "
