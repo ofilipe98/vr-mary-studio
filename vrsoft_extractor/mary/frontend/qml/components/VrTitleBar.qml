@@ -112,14 +112,16 @@ Item {
         Item {
             width: 16
             height: 16
+            Layout.preferredWidth: 16
+            Layout.preferredHeight: 16
+            Layout.alignment: Qt.AlignVCenter
 
             Rectangle {
                 objectName: "environmentArtwork"
                 anchors.fill: parent
-                radius: 4
                 visible: typeof frontend !== "undefined" && frontend && frontend.environmentStage !== "" && frontend.environmentIdentification === "artwork"
-                color: Qt.alpha(Theme.palette.focus, .2)
-                border.color: Theme.palette.focus
+                color: "transparent"
+                border.width: 0
             }
 
             Image {

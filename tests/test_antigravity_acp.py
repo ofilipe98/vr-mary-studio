@@ -714,6 +714,217 @@ def test_stale_cleanup_failure_does_not_abort_profile_preparation(tmp_path, monk
     ), "the failed reclaim must be reported as a warning"
 
 
+# --- Orphan runtime reclamation, job diagnostics and shutdown hooks ----------
+
+
+def test_remove_acp_temp_dir_warning_reports_os_error(tmp_path, caplog):
+    from vrsoft_extractor.mary import antigravity_acp as acp_module
+    temp_dir = tmp_path / "proc-locked"
+    temp_dir.mkdir()
+
+    with patch("vrsoft_extractor.mary.antigravity_acp.shutil.rmtree",
+               side_effect=PermissionError(13, "Access is denied")), \
+            patch("vrsoft_extractor.mary.antigravity_acp.time.sleep"), \
+            caplog.at_level(logging.WARNING, logger="vrsoft_extractor.mary.antigravity_acp"):
+        assert acp_module._remove_acp_temp_dir(temp_dir) is False
+
+    assert temp_dir.exists()
+    message = next(record.getMessage() for record in caplog.records
+                   if record.name == "vrsoft_extractor.mary.antigravity_acp")
+    assert str(temp_dir) in message
+    assert "Access is denied" in message, "the OS error must explain what blocked the removal"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="orphan termination uses taskkill")
+def test_cleanup_terminates_orphaned_runtime_before_reclaim(tmp_path, monkeypatch, caplog):
+    from vrsoft_extractor.mary import antigravity_acp as acp_module
+    from vrsoft_extractor.mary.execution.ownership import process_identity
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path / "system-tmp"))
+    (tmp_path / "system-tmp").mkdir()
+    profile = tmp_path / "profile"
+    tmp_root = profile / "antigravity-acp" / "tmp"
+    tmp_root.mkdir(parents=True)
+
+    temp_dir, handle = acp_module._create_owned_temp_dir(tmp_root, prefix="proc-")
+    runtime = subprocess.Popen(
+        [sys.executable, "-u", "-c", "import time; time.sleep(120)"],
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    try:
+        acp_module._record_runtime_info(temp_dir, runtime.pid)
+        assert process_identity(runtime.pid), "the recorded runtime must be alive"
+        # The owner died: its lock is gone, but the runtime survived and keeps
+        # the directory (PyInstaller extraction) locked.
+        acp_module._release_temp_lock(handle)
+        handle = None
+
+        with caplog.at_level(logging.WARNING, logger="vrsoft_extractor.mary.antigravity_acp"):
+            removed = acp_module._cleanup_stale_acp_temp_dirs(profile_dir=profile)
+
+        assert removed == 1
+        assert not Path(temp_dir).exists()
+        deadline = time.time() + 10
+        while time.time() < deadline and process_identity(runtime.pid):
+            time.sleep(0.05)
+        assert process_identity(runtime.pid) == "", "the orphaned runtime must be terminated"
+        assert any("órfão" in record.getMessage() for record in caplog.records)
+    finally:
+        if handle is not None:
+            acp_module._release_temp_lock(handle)
+        if runtime.poll() is None:
+            runtime.kill()
+            runtime.wait(timeout=5)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="orphan termination uses taskkill")
+def test_cleanup_never_signals_a_recycled_pid(tmp_path, monkeypatch):
+    from vrsoft_extractor.mary import antigravity_acp as acp_module
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path / "system-tmp"))
+    (tmp_path / "system-tmp").mkdir()
+    profile = tmp_path / "profile"
+    tmp_root = profile / "antigravity-acp" / "tmp"
+    tmp_root.mkdir(parents=True)
+
+    temp_dir, handle = acp_module._create_owned_temp_dir(tmp_root, prefix="proc-")
+    runtime = subprocess.Popen(
+        [sys.executable, "-u", "-c", "import time; time.sleep(120)"],
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    try:
+        # Same PID, but the creation-time identity no longer matches: the PID
+        # must be treated as an unrelated process and never signalled.
+        Path(temp_dir, acp_module.ACP_TEMP_RUNTIME_INFO).write_text(
+            f"{os.getpid()}|{runtime.pid}|0:1\n", encoding="utf-8"
+        )
+        acp_module._release_temp_lock(handle)
+        handle = None
+
+        removed = acp_module._cleanup_stale_acp_temp_dirs(profile_dir=profile)
+
+        assert removed == 1
+        assert not Path(temp_dir).exists()
+        assert runtime.poll() is None, "a mismatching identity must never be killed"
+    finally:
+        if handle is not None:
+            acp_module._release_temp_lock(handle)
+        if runtime.poll() is None:
+            runtime.kill()
+            runtime.wait(timeout=5)
+
+
+def test_start_records_runtime_identity_for_orphan_reclaim(tmp_path, monkeypatch):
+    from vrsoft_extractor.mary import antigravity_acp as acp_module
+    from vrsoft_extractor.mary.execution.ownership import process_identity
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    profile = tmp_path / "profile"
+    script = tmp_path / "acp_fixture.py"
+    script.write_text(
+        'import sys, json, os\n'
+        "for line in sys.stdin:\n"
+        "    request = json.loads(line)\n"
+        "    if request['method'] == 'initialize':\n"
+        "        result = {'protocolVersion': 1, 'agentCapabilities': {},"
+        " 'authMethods': [{'id': 'oauth-personal'}]}\n"
+        "    else:\n"
+        "        result = {'sessionId': 'fixture'}\n"
+        "    frame = (json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'result': result}) + '\\n').encode()\n"
+        "    os.write(sys.stdout.fileno(), frame)\n",
+        encoding="utf-8",
+    )
+    popen = subprocess.Popen
+    def launch(command, **kwargs):
+        return popen([sys.executable, "-u", str(script)], **kwargs)
+
+    client = AcpClient(command="fixture", env={})
+    try:
+        with patch("vrsoft_extractor.mary.antigravity_acp.profile_path", return_value=profile), \
+                patch("vrsoft_extractor.mary.antigravity_acp.subprocess.Popen", side_effect=launch):
+            client.start()
+            owner, pid_text, identity = Path(
+                client._temp_dir, acp_module.ACP_TEMP_RUNTIME_INFO
+            ).read_text(encoding="utf-8").strip().split("|")
+            assert owner == str(os.getpid())
+            assert int(pid_text) == client.process.pid
+            assert identity == process_identity(client.process.pid)
+    finally:
+        client.close()
+
+
+def test_start_registers_atexit_close_and_close_unregisters(tmp_path, monkeypatch):
+    monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
+    profile = tmp_path / "profile"
+    script = tmp_path / "acp_fixture.py"
+    script.write_text(
+        'import sys, json, os\n'
+        "for line in sys.stdin:\n"
+        "    request = json.loads(line)\n"
+        "    if request['method'] == 'initialize':\n"
+        "        result = {'protocolVersion': 1, 'agentCapabilities': {},"
+        " 'authMethods': [{'id': 'oauth-personal'}]}\n"
+        "    else:\n"
+        "        result = {'sessionId': 'fixture'}\n"
+        "    frame = (json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'result': result}) + '\\n').encode()\n"
+        "    os.write(sys.stdout.fileno(), frame)\n",
+        encoding="utf-8",
+    )
+    popen = subprocess.Popen
+    def launch(command, **kwargs):
+        return popen([sys.executable, "-u", str(script)], **kwargs)
+
+    client = AcpClient(command="fixture", env={})
+    with patch("vrsoft_extractor.mary.antigravity_acp.profile_path", return_value=profile), \
+            patch("vrsoft_extractor.mary.antigravity_acp.subprocess.Popen", side_effect=launch), \
+            patch("vrsoft_extractor.mary.antigravity_acp.atexit") as atexit_mock:
+        client.start()
+        atexit_mock.register.assert_called_once()
+        registered = atexit_mock.register.call_args.args[0]
+        assert registered == client._close_at_exit
+        client.close()
+        atexit_mock.unregister.assert_called_once_with(registered)
+    assert client._atexit_registered is False
+
+
+@pytest.mark.skipif(os.name != "nt", reason="kill-on-close job objects are Windows-only")
+def test_job_creation_failure_is_logged(caplog):
+    import ctypes
+
+    from vrsoft_extractor.mary import antigravity_acp as acp_module
+    failing = MagicMock()
+    failing.CreateJobObjectW.return_value = 0
+
+    with patch.object(acp_module, "_win32_job_api", return_value=(ctypes, None, failing)), \
+            caplog.at_level(logging.WARNING, logger="vrsoft_extractor.mary.antigravity_acp"):
+        assert acp_module._create_kill_on_close_job() is None
+
+    assert any("CreateJobObjectW" in record.getMessage() for record in caplog.records), \
+        "a missing kill-on-close job must never fail silently"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="kill-on-close job objects are Windows-only")
+def test_job_assignment_failure_is_logged(caplog):
+    import ctypes
+    from ctypes import wintypes
+
+    from vrsoft_extractor.mary import antigravity_acp as acp_module
+    failing = MagicMock()
+    failing.AssignProcessToJobObject.return_value = 0
+    runtime = subprocess.Popen(
+        [sys.executable, "-u", "-c", "import time; time.sleep(120)"],
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    try:
+        with patch.object(acp_module, "_win32_job_api", return_value=(ctypes, wintypes, failing)), \
+                caplog.at_level(logging.WARNING, logger="vrsoft_extractor.mary.antigravity_acp"):
+            assert acp_module._assign_process_to_job(object(), runtime) is False
+
+        assert any("kill-on-close" in record.getMessage() for record in caplog.records), \
+            "a refused assignment must never fail silently"
+    finally:
+        if runtime.poll() is None:
+            runtime.kill()
+            runtime.wait(timeout=5)
+
+
 # --- Discovery: %LOCALAPPDATA%/agy/bin/acp/<version>/ layout ---------------
 
 EXE_NAME = "agy_acp_server.exe" if os.name == "nt" else "agy_acp_server"

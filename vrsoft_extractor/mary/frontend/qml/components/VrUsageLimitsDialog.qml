@@ -253,11 +253,15 @@ Dialog {
             Text {
                 Layout.fillWidth: true
                 visible: root.accountsList.length === 0
-                text: root.status === "unsupported"
-                    ? "Este provedor não disponibiliza limites de uso localmente."
-                    : root.status === "error" || root.status === "unavailable"
-                        ? "Não foi possível consultar os limites de uso."
-                        : "Carregando informações de limite de uso…"
+                text: {
+                    if (root.snapshot && root.snapshot.error)
+                        return String(root.snapshot.error)
+                    return root.status === "unsupported"
+                        ? "Este provedor não disponibiliza limites de uso localmente."
+                        : root.status === "error" || root.status === "unavailable"
+                            ? "Não foi possível consultar os limites de uso."
+                            : "Carregando informações de limite de uso…"
+                }
                 color: Theme.palette.mutedText
                 font.family: Theme.fontFamily
                 font.pixelSize: Theme.fontSizeCaption

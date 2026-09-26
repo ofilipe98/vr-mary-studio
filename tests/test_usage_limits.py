@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import datetime
+import json
 import time
 from unittest.mock import MagicMock
 
@@ -13,7 +15,10 @@ from vrsoft_extractor.mary.usage.store import UsageLimitsStore
 from vrsoft_extractor.mary.usage.adapters.codex import CodexUsageAdapter
 from vrsoft_extractor.mary.usage.adapters.claude import ClaudeUsageAdapter
 from vrsoft_extractor.mary.usage.adapters.antigravity import AntigravityUsageAdapter
-from vrsoft_extractor.mary.usage.adapters.opencode import OpenCodeUsageAdapter
+from vrsoft_extractor.mary.usage.adapters.opencode import (
+    OpenCodeUsageAdapter,
+    OpenCodeUsageError,
+)
 
 
 def test_models_to_dict():
@@ -68,11 +73,92 @@ def test_honest_unsupported_adapters():
     assert snap_ag.provider == "antigravity"
     assert "não expõe" in (snap_ag.error or "")
 
-    oc = OpenCodeUsageAdapter()
+    oc = OpenCodeUsageAdapter(api_key="")
     snap_oc = oc.fetch_usage_limits()
     assert snap_oc.status == "unsupported"
     assert snap_oc.provider == "opencode"
-    assert "não expõe" in (snap_oc.error or "")
+    assert "OpenCode Go" in (snap_oc.error or "")
+    assert len(snap_oc.windows) == 0
+
+
+def test_opencode_usage_adapter_parses_go_windows():
+    """O provedor opencode expõe as janelas rolling/semanal/mensal do plano Go."""
+    adapter = OpenCodeUsageAdapter(api_key="sk-test")
+    adapter._request_usage = lambda key: {
+        "usage": {
+            "rolling": {"status": "ok", "percent": 0, "resetsAt": "2026-09-26T03:28:13.832Z"},
+            "weekly": {"status": "ok", "percent": 64, "resetsAt": "2026-09-28T00:00:00.000Z"},
+            "monthly": {"status": "limited", "percent": 48, "resetsAt": "2026-10-19T23:23:12.000Z"},
+        }
+    }
+
+    snapshot = adapter.fetch_usage_limits()
+    assert snapshot.status == "available"
+    assert snapshot.provider == "opencode"
+    assert snapshot.plan == "Go"
+    assert snapshot.error is None
+
+    windows = {window.id: window for window in snapshot.windows}
+    assert list(windows) == ["opencode_go_rolling", "opencode_go_weekly", "opencode_go_monthly"]
+
+    rolling = windows["opencode_go_rolling"]
+    assert rolling.label == "5-hour"
+    assert rolling.used_ratio == 0.0
+    assert rolling.remaining_ratio == 1.0
+    assert rolling.window_duration_mins == 300
+    assert rolling.reset_at == datetime.datetime(
+        2026, 9, 26, 3, 28, 13, 832000, tzinfo=datetime.timezone.utc
+    ).timestamp()
+
+    weekly = windows["opencode_go_weekly"]
+    assert weekly.used_ratio == 0.64
+    assert weekly.remaining_ratio == 0.36
+    assert weekly.window_duration_mins == 10080
+
+    monthly = windows["opencode_go_monthly"]
+    assert monthly.used_ratio == 0.48
+    assert monthly.window_duration_mins == 43200
+    assert monthly.metadata["status"] == "limited"
+
+
+def test_opencode_usage_adapter_reads_local_auth_key(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text(
+        json.dumps({"opencode-go": {"type": "api", "key": "sk-local"}}),
+        encoding="utf-8",
+    )
+    adapter = OpenCodeUsageAdapter(auth_file=auth_file)
+    seen: dict[str, str] = {}
+    adapter._request_usage = lambda key: seen.update(key=key) or {
+        "usage": {"rolling": {"status": "ok", "percent": 10, "resetsAt": "2026-09-26T03:00:00Z"}}
+    }
+
+    snapshot = adapter.fetch_usage_limits()
+    assert seen["key"] == "sk-local"
+    assert snapshot.status == "available"
+    assert [window.id for window in snapshot.windows] == ["opencode_go_rolling"]
+
+
+def test_opencode_usage_adapter_reports_endpoint_failure():
+    adapter = OpenCodeUsageAdapter(api_key="sk-test")
+
+    def failing_request(key):
+        raise OpenCodeUsageError("O serviço do OpenCode Go recusou a chave (HTTP 401).")
+
+    adapter._request_usage = failing_request
+    snapshot = adapter.fetch_usage_limits()
+    assert snapshot.status == "error"
+    assert snapshot.windows == []
+    assert "HTTP 401" in (snapshot.error or "")
+
+
+def test_opencode_usage_adapter_rejects_payload_without_windows():
+    adapter = OpenCodeUsageAdapter(api_key="sk-test")
+    adapter._request_usage = lambda key: {"usage": {}}
+    snapshot = adapter.fetch_usage_limits()
+    assert snapshot.status == "error"
+    assert "nenhuma janela" in (snapshot.error or "")
 
 
 def test_codex_adapter_parsing():
